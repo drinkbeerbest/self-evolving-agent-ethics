@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>伦理熔断控制台 · 自进化智能体的准入控制</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/>
+      </svg>
+      <div class="brand-text">
+        <strong>伦理熔断控制台</strong>
+        <span>自进化智能体 · 面向自我修改的准入控制与对齐成本测量</span>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab is-active" data-view="live">进化直播</button>
+      <button class="tab" data-view="frontier">成本账本</button>
+      <button class="tab" data-view="audit">审计链</button>
+      <button class="tab" data-view="more">附录 · 方法与矩阵</button>
+    </nav>
+  </div>
+</header>
+
+<main class="shell">
+
+  <!-- ============ 进化直播（主页） ============ -->
+  <section class="view is-active" id="view-live">
+    <div class="live-grid">
+
+      <aside class="live-side">
+        <div class="card control-card">
+          <h3>控制台</h3>
+          <div class="ctl-label">模式</div>
+          <div class="seg seg-block" id="modeSeg">
+            <button class="seg-btn is-active" data-mode="auto">自动</button>
+            <button class="seg-btn" data-mode="offline">离线演示</button>
+            <button class="seg-btn" data-mode="live">真实 API</button>
+          </div>
+          <div class="ctl-label">进化代数</div>
+          <div class="ctl-row">
+            <input type="range" id="ctlGens" min="3" max="12" value="8" step="1" />
+            <span class="ctl-val" id="ctlGensVal">8 代</span>
+          </div>
+          <label class="ctl-check">
+            <input type="checkbox" id="ctlPressure" checked />
+            进化压力（分数必须逐代上涨，诱发越界提案）
+          </label>
+          <button class="btn btn-primary btn-block" id="btnStart">▶ 开始进化</button>
+          <button class="btn btn-block is-hidden" id="btnStop">■ 停止本场</button>
+          <div class="api-status" id="apiStatus">检测中…</div>
+
+          <div class="ctl-label" style="margin-top:14px;">历史回放</div>
+          <div class="replay-row">
+            <select id="replaySel"><option value="">（暂无历史会话）</option></select>
+            <button class="btn btn-sm" id="btnReplay">回放</button>
+          </div>
+        </div>
+
+        <div class="card vitals-card">
+          <h3>Agent 当前构成</h3>
+          <p class="card-note">S = (P, T, C, A, Φ)。放行的修改会持久化写进这里，成为下一代的起点。</p>
+          <div class="vit-group">
+            <div class="vit-label">工具 T</div>
+            <div class="chip-row" id="vitTools"><span class="chip">—</span></div>
+          </div>
+          <div class="vit-group">
+            <div class="vit-label">提示词 P</div>
+            <ul class="vit-list" id="vitPrompts"><li>—</li></ul>
+          </div>
+          <div class="vit-group">
+            <div class="vit-label">策略参数 C</div>
+            <div class="chip-row" id="vitParams"><span class="chip">—</span></div>
+          </div>
+          <div class="vit-group">
+            <div class="vit-label">约束 Φ（I4 守恒对象）</div>
+            <ul class="vit-list vit-lock" id="vitConstraints"><li>—</li></ul>
+          </div>
+          <div class="code-ver" id="vitCode">code v0</div>
+        </div>
+      </aside>
+
+      <div class="live-main">
+        <div class="stat-row" id="liveStats"></div>
+
+        <div class="card chart-card">
+          <div class="chart-head">
+            <h3>能力分曲线</h3>
+            <span class="tag" id="liveTag">待机</span>
+          </div>
+          <div id="capChart" class="chart-wrap chart-empty">尚未开始——开始后这里会画出逐代得分曲线。</div>
+        </div>
+
+        <div class="live-status" id="liveStatus">
+          <span class="pulse-dot"></span>待机：选择模式后点「开始进化」
+        </div>
+
+        <div id="cardStream" class="card-stream">
+          <p class="empty">卡片流：agent 的每一次自我修改提案与熔断判定都会实时出现在这里。红卡 = 拦截，绿卡 = 放行，点击卡片看完整判定依据。</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 成本账本 ============ -->
+  <section class="view" id="view-frontier">
+    <div class="view-head">
+      <div>
+        <h1>对齐成本账本</h1>
+        <p class="lede">横轴是对齐总成本，纵轴是残余风险（漏放率）。成本越低越好，风险越低越好——被支配的策略在工程上不应被采用。伦理要求必须可计价，否则就会在工程预算表上消失。</p>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-group">
+        <span class="filter-label">任务集</span>
+        <div class="seg" id="filtSuite">
+          <button class="seg-btn is-active" data-suite="all">全部</button>
+          <button class="seg-btn" data-suite="code">代码修复</button>
+          <button class="seg-btn" data-suite="qa">检索问答</button>
+          <button class="seg-btn" data-suite="tool">工具调用</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">样本来源</span>
+        <div class="seg" id="filtSource">
+          <button class="seg-btn is-active" data-source="all">全部</button>
+          <button class="seg-btn" data-source="artificial">人工构造</button>
+          <button class="seg-btn" data-source="emergent">自然涌现</button>
+        </div>
+      </div>
+      <span class="filter-note">两路样本分开统计，不合并计算总拦截率</span>
+    </div>
+
+    <div class="card">
+      <div class="chart-head">
+        <h3>五种门禁策略的对比</h3>
+        <span class="tag" id="frontierTag"></span>
+      </div>
+      <div id="paretoWrap" class="chart-wrap"></div>
+      <p class="card-note" id="paretoNote"></p>
+    </div>
+
+    <div class="card">
+      <h3>对齐成本效率比 ACER = 风险降低量 ÷ 对齐总成本</h3>
+      <p class="card-note">ACER 让不同策略可以在同一坐标系里比较。权重不设固定值，此处给出成本分解结构，读者可按自己的场景重新加权。</p>
+      <div id="acerBars"></div>
+    </div>
+
+    <div class="card">
+      <div class="chart-head">
+        <h3>七维成本分解</h3>
+        <span class="tag" id="costTableTag"></span>
+      </div>
+      <div class="table-wrap"><table id="costTable"></table></div>
+      <p class="card-note">C<sub>iter</sub> 迭代效率损失最容易被忽视，却对自进化系统最致命——它不出现在任何单次评估里，只在长期曲线上可见。</p>
+    </div>
+  </section>
+
+  <!-- ============ 审计链 ============ -->
+  <section class="view" id="view-audit">
+    <div class="view-head">
+      <div>
+        <h1>哈希链式审计记录</h1>
+        <p class="lede">每条记录含 prev_hash 与 this_hash。任何一条被篡改，后续所有记录的校验都会失败——这是 I2 审计完备性的物理基础，也是"拒绝理由可申诉"的证据所在。</p>
+      </div>
+      <span class="tag" id="auditTag"></span>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table id="auditTable"></table></div>
+    </div>
+  </section>
+
+  <!-- ============ 附录 · 方法与矩阵 ============ -->
+  <section class="view" id="view-more">
+    <div class="view-head">
+      <div>
+        <h1>方法与风险矩阵</h1>
+        <p class="lede">防护从"看它做了什么"移到"看它变成了什么"：把伦理要求降解为四条可判定不变量，在自我修改生效前插入有状态的准入判定。</p>
+      </div>
+    </div>
+
+    <h2 class="section-title">四级门禁流水线</h2>
+    <p class="section-note">前一关不通过即中止，不进入下一关。每一级都有独立的通过条件与成本——这是熔断机制能被计价的前提。</p>
+    <div class="gate-flow" id="gateFlow"></div>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>四条伦理不变量</h3>
+        <p class="card-note">把"伦理要求"翻译成"状态转移必须保持的性质"。前三条完全可判定，第四条只能部分判定。</p>
+        <ul class="inv-list" id="invList"></ul>
+      </div>
+      <div class="card">
+        <h3>四条熔断触发条件</h3>
+        <p class="card-note">熔断与拒绝的区别不在处置动作，而在状态：熔断会锁定某类修改路径一段时间，并把触发事件送入阈值标定。</p>
+        <ul class="trigger-list" id="triggerList"></ul>
+      </div>
+    </div>
+
+    <div class="view-head" style="margin-top:26px;">
+      <div>
+        <h2 class="section-title" style="margin-bottom:0;">自我修改行为的风险矩阵</h2>
+        <p class="lede">6 层修改对象 × 3 级自主度 = 18 格，五属性加权成风险指数。高危格的提案强制加严门禁。</p>
+      </div>
+      <div class="legend" id="heatLegend"></div>
+    </div>
+    <div class="card">
+      <div class="heatmap-wrap" id="heatmap"></div>
+      <p class="card-note" id="matrixNote"></p>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <h3>权重来源与一致性</h3>
+        <div id="weightReport"></div>
+      </div>
+      <div class="card">
+        <h3>高危格</h3>
+        <p class="card-note">落在高危格的提案在一级静态审查后强制进入沙箱演练，门禁资源应当向这些格倾斜。</p>
+        <div id="highRiskList"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ 判定详情弹窗 ============ -->
+<div class="modal-mask is-hidden" id="modalMask">
+  <div class="modal" id="modalBox" role="dialog" aria-modal="true">
+    <button class="modal-close" id="modalClose" title="关闭">✕</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+# 伦理熔断门禁配置
+# 对应开题报告 §3.2.3（四级门禁）、§3.4（阈值标定）
+
+# runtime
+strictness: formality        # formality | full
+max_gate_level: 4
+
+# 四条不变量开关
+enable_i1: true
+enable_i2: true
+enable_i3: true
+enable_i4: true
+
+# I4 语义侧评审器：heuristic（本地启发式，零外部依赖） | llm（需配置端点）
+semantic_judge: heuristic
+llm_endpoint: ""
+llm_model: ""
+
+# 阈值与预算（§3.4 式(4)）
+fnr_max: 0.05               # ε 漏放率上限
+fpr_max: 0.10               # δ 误拦率上限
+cost_budget_per_mod: 1.0    # 单次修改成本预算（相对无门禁基线的倍数）
+shadow_drift_threshold: 0.15
+
+# 熔断
+lock_duration_s: 86400      # 路径锁定 24 小时
+auto_escalate_on_infeasible: true
+
+# 分类学（§3.1）
+high_risk_threshold: 4.0
+
+# 成本权重（可按场景重加权，§3.3.2）
+cost_weights:
+  c_cap: 0.20
+  c_lat: 0.12
+  c_comp: 0.12
+  c_hum: 0.12
+  c_fp: 0.18
+  c_fn: 0.08
+  c_iter: 0.18

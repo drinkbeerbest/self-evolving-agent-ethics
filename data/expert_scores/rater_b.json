@@ -1,0 +1,128 @@
+{
+  "提示×系统提议·人类批准": {
+    "reversibility": 1,
+    "observability": 3,
+    "permission_expansion": 1,
+    "goal_drift": 2,
+    "impact_radius": 3
+  },
+  "提示×系统提议·系统初筛·人类抽检": {
+    "reversibility": 1,
+    "observability": 4,
+    "permission_expansion": 1,
+    "goal_drift": 3,
+    "impact_radius": 4
+  },
+  "提示×系统自主采纳·人类事后审计": {
+    "reversibility": 1,
+    "observability": 4,
+    "permission_expansion": 2,
+    "goal_drift": 4,
+    "impact_radius": 4
+  },
+  "工具×系统提议·人类批准": {
+    "reversibility": 1,
+    "observability": 3,
+    "permission_expansion": 4,
+    "goal_drift": 2,
+    "impact_radius": 5
+  },
+  "工具×系统提议·系统初筛·人类抽检": {
+    "reversibility": 1,
+    "observability": 4,
+    "permission_expansion": 4,
+    "goal_drift": 3,
+    "impact_radius": 5
+  },
+  "工具×系统自主采纳·人类事后审计": {
+    "reversibility": 2,
+    "observability": 4,
+    "permission_expansion": 5,
+    "goal_drift": 4,
+    "impact_radius": 5
+  },
+  "代码×系统提议·人类批准": {
+    "reversibility": 2,
+    "observability": 3,
+    "permission_expansion": 3,
+    "goal_drift": 4,
+    "impact_radius": 5
+  },
+  "代码×系统提议·系统初筛·人类抽检": {
+    "reversibility": 2,
+    "observability": 4,
+    "permission_expansion": 3,
+    "goal_drift": 5,
+    "impact_radius": 5
+  },
+  "代码×系统自主采纳·人类事后审计": {
+    "reversibility": 3,
+    "observability": 4,
+    "permission_expansion": 4,
+    "goal_drift": 5,
+    "impact_radius": 5
+  },
+  "架构×系统提议·人类批准": {
+    "reversibility": 3,
+    "observability": 4,
+    "permission_expansion": 3,
+    "goal_drift": 3,
+    "impact_radius": 5
+  },
+  "架构×系统提议·系统初筛·人类抽检": {
+    "reversibility": 3,
+    "observability": 5,
+    "permission_expansion": 3,
+    "goal_drift": 4,
+    "impact_radius": 5
+  },
+  "架构×系统自主采纳·人类事后审计": {
+    "reversibility": 4,
+    "observability": 5,
+    "permission_expansion": 4,
+    "goal_drift": 5,
+    "impact_radius": 5
+  },
+  "权重×系统提议·人类批准": {
+    "reversibility": 4,
+    "observability": 5,
+    "permission_expansion": 2,
+    "goal_drift": 2,
+    "impact_radius": 5
+  },
+  "权重×系统提议·系统初筛·人类抽检": {
+    "reversibility": 4,
+    "observability": 5,
+    "permission_expansion": 2,
+    "goal_drift": 3,
+    "impact_radius": 5
+  },
+  "权重×系统自主采纳·人类事后审计": {
+    "reversibility": 5,
+    "observability": 5,
+    "permission_expansion": 3,
+    "goal_drift": 4,
+    "impact_radius": 5
+  },
+  "约束×系统提议·人类批准": {
+    "reversibility": 1,
+    "observability": 5,
+    "permission_expansion": 2,
+    "goal_drift": 5,
+    "impact_radius": 5
+  },
+  "约束×系统提议·系统初筛·人类抽检": {
+    "reversibility": 1,
+    "observability": 5,
+    "permission_expansion": 2,
+    "goal_drift": 5,
+    "impact_radius": 5
+  },
+  "约束×系统自主采纳·人类事后审计": {
+    "reversibility": 2,
+    "observability": 5,
+    "permission_expansion": 3,
+    "goal_drift": 5,
+    "impact_radius": 5
+  }
+}

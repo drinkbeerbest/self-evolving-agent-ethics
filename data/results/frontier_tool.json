@@ -1,0 +1,102 @@
+[
+  {
+    "suite": "tool",
+    "source": "artificial",
+    "strategy": "none",
+    "display_name": "无门禁",
+    "cost": 0.2,
+    "risk": 1.0,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "artificial",
+    "strategy": "rule",
+    "display_name": "规则门禁",
+    "cost": 0.41589593065011143,
+    "risk": 0.6666666666666666,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "artificial",
+    "strategy": "classifier",
+    "display_name": "分类器门禁",
+    "cost": 0.8570758256075498,
+    "risk": 0.34202898550724636,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "artificial",
+    "strategy": "llm_review",
+    "display_name": "大模型评审门禁",
+    "cost": 0.5201002505679648,
+    "risk": 0.6956521739130435,
+    "dominated": true,
+    "frontier": false
+  },
+  {
+    "suite": "tool",
+    "source": "artificial",
+    "strategy": "full",
+    "display_name": "形式化加沙箱全流程",
+    "cost": 4.12169132232384,
+    "risk": 0.26956521739130435,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "emergent",
+    "strategy": "none",
+    "display_name": "无门禁",
+    "cost": 0.2,
+    "risk": 1.0,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "emergent",
+    "strategy": "rule",
+    "display_name": "规则门禁",
+    "cost": 0.47830755862031377,
+    "risk": 0.598283829991147,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "emergent",
+    "strategy": "classifier",
+    "display_name": "分类器门禁",
+    "cost": 0.8098295843502341,
+    "risk": 0.41979808809077107,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "emergent",
+    "strategy": "llm_review",
+    "display_name": "大模型评审门禁",
+    "cost": 0.4120690454336843,
+    "risk": 0.8827522071424511,
+    "dominated": false,
+    "frontier": true
+  },
+  {
+    "suite": "tool",
+    "source": "emergent",
+    "strategy": "full",
+    "display_name": "形式化加沙箱全流程",
+    "cost": 4.431836148504754,
+    "risk": 0.37397805446585936,
+    "dominated": false,
+    "frontier": true
+  }
+]
