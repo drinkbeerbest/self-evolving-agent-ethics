@@ -246,7 +246,7 @@ def get_runtime() -> dict[str, Any]:
             )
             chain = AuditChain(cfg.audit_log)
             breaker = CircuitBreaker(cfg, chain)
-            pipeline = GatePipeline(cfg, cells, breaker=breaker)
+            pipeline = GatePipeline(cfg, cells)
             _RUNTIME.update(
                 {
                     "config": cfg,
@@ -264,6 +264,7 @@ def get_runtime() -> dict[str, Any]:
 def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
     rt = get_runtime()
     pipeline = rt["pipeline"]
+    breaker = rt["breaker"]
     audit = rt["audit"]
     config = rt["config"]
 
@@ -276,11 +277,38 @@ def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
             "autonomy": mod.autonomy.value,
             "title": mod.title,
             "source": mod.source,
-            "mod": to_jsonable(mod),
-            "state": to_jsonable(state),
         },
     )
+    if breaker.is_locked(mod):
+        from .types import AdmissionAction, CostLedger, GateLevel, path_key
+
+        pkey = path_key(mod.layer, mod.autonomy)
+        until = breaker.locked_paths().get(pkey)
+        verdict = {
+            "mod": to_jsonable(mod),
+            "action": AdmissionAction.REJECT.value,
+            "gate_level": int(GateLevel.STATIC),
+            "results": [],
+            "cost": CostLedger().as_dict(),
+            "cost_total": 0.0,
+            "elapsed_s": 0.0,
+            "detail": {
+                "locked": True,
+                "locked_path": pkey,
+                "locked_until": until,
+                "reason": f"路径「{pkey}」处于熔断锁定期（至 {until}），同类提案一律拒绝",
+                "cost_absolute": {"elapsed_s": 0.0, "tokens": 0.0, "gpu_s": 0.0, "comp_cost": 0.0},
+            },
+            "breaker": None,
+            "audit_hash": audit.head_hash(),
+        }
+        audit.append("verdict", verdict)
+        rt["verdicts"].insert(0, verdict)
+        rt["verdicts"] = rt["verdicts"][:200]
+        return verdict
+
     gate_result = pipeline.run(mod, state)
+    event = breaker.evaluate(mod, gate_result)
     verdict = {
         "mod": to_jsonable(mod),
         "action": gate_result.action.value,
@@ -290,9 +318,10 @@ def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
         "cost_total": gate_result.cost.weighted_total(config.cost_weights or None),
         "elapsed_s": gate_result.elapsed_s,
         "detail": to_jsonable(gate_result.detail),
-        "breaker": gate_result.detail.get("breaker"),
+        "breaker": to_jsonable(event) if event else None,
         "audit_hash": audit.head_hash(),
     }
+    audit.append("verdict", verdict)
     rt["verdicts"].insert(0, verdict)
     rt["verdicts"] = rt["verdicts"][:200]
     return verdict
@@ -410,7 +439,7 @@ def _live_manager():
 
 
 def api_live_status() -> dict[str, Any]:
-    from .minievol import SCENARIOS, api_configured, load_api_config
+    from .minievol import api_configured, load_api_config
 
     mgr = _live_manager()
     api_cfg = load_api_config() if api_configured() else None
@@ -421,37 +450,11 @@ def api_live_status() -> dict[str, Any]:
         "model": (api_cfg or {}).get("model", ""),
         "current": cur,
         "sessions": mgr.saved_sessions()[:12],
-        "scenarios": [
-            {"key": s.key, "name": s.name, "description": s.description}
-            for s in SCENARIOS.values()
-        ],
     }
 
 
 def api_live_sessions() -> dict[str, Any]:
     return {"sessions": _live_manager().saved_sessions()}
-
-
-def api_pulse() -> dict[str, Any]:
-    """跨视图聚合：直播实录 → 成本账本 / 矩阵命中 / 被拦不变量分布。"""
-    from .live import aggregate_sessions
-
-    sessions = aggregate_sessions()
-    totals = {
-        "sessions": len(sessions),
-        "generations": sum(s["generations"] for s in sessions),
-        "blocked": sum(s["blocked"] for s in sessions),
-        "passed": sum(s["passed"] for s in sessions),
-        "gate_elapsed_s": round(sum(s["gate_elapsed_s"] for s in sessions), 3),
-        "by_invariant": {},
-        "blocked_cells": {},
-    }
-    for s in sessions:
-        for k, v in s["by_invariant"].items():
-            totals["by_invariant"][k] = totals["by_invariant"].get(k, 0) + v
-        for k, v in s["blocked_cells"].items():
-            totals["blocked_cells"][k] = totals["blocked_cells"].get(k, 0) + v
-    return {"sessions": sessions, "totals": totals}
 
 
 def api_live_session(session_id: str) -> dict[str, Any]:
@@ -482,9 +485,6 @@ def live_start(body: dict[str, Any]) -> dict[str, Any]:
         generations=int(body.get("generations", 8)),
         pressure=bool(body.get("pressure", True)),
         speed=float(body.get("speed", 1.0)),
-        scenario_key=str(body.get("scenario", "")),
-        gate_mode=str(body.get("gate_mode", "enforce")),
-        seed=(int(body["seed"]) if body.get("seed") is not None else None),
     )
     opts.generations = max(1, min(20, opts.generations))
     session = _live_manager().create(opts)
@@ -616,9 +616,6 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/live/sessions":
                 self._send_json(api_live_sessions())
                 return
-            if path == "/api/pulse":
-                self._send_json(api_pulse())
-                return
             if path.startswith("/api/live/session/"):
                 self._send_json(api_live_session(path.rsplit("/", 1)[-1]))
                 return
@@ -657,10 +654,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(run_gate(mod, state))
                 return
             if path == "/api/live/start":
-                try:
-                    self._send_json(live_start(body))
-                except RuntimeError as exc:
-                    self._send_json({"error": str(exc)}, 409)
+                self._send_json(live_start(body))
                 return
             if path == "/api/live/stop":
                 self._send_json(live_stop())

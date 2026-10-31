@@ -3,12 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="color-scheme" content="dark light" />
-<script>(function(){var t=null;try{t=localStorage.getItem('ethgate-theme')}catch(e){}if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <title>伦理熔断控制台 · 自进化智能体的准入控制</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -20,8 +18,8 @@
         <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/>
       </svg>
       <div class="brand-text">
-        <strong>ETHGATE</strong>
-        <span>伦理熔断控制台 · 自进化智能体的准入控制与对齐成本测量</span>
+        <strong>伦理熔断控制台</strong>
+        <span>自进化智能体 · 面向自我修改的准入控制与对齐成本测量</span>
       </div>
     </div>
     <nav class="tabs" id="tabs">
@@ -30,12 +28,6 @@
       <button class="tab" data-view="audit">审计链</button>
       <button class="tab" data-view="more">附录 · 方法与矩阵</button>
     </nav>
-    <div class="sys-leds">
-      <span class="led is-unknown" id="ledChain" title="审计链尚未验证"><i></i>AUDIT</span>
-      <span class="led" id="ledApi"><i></i>API</span>
-      <span class="led" id="ledLive"><i></i>LIVE</span>
-      <button class="theme-toggle" id="themeToggle" title="切换深浅主题">☾</button>
-    </div>
   </div>
 </header>
 
@@ -59,17 +51,6 @@
             <input type="range" id="ctlGens" min="3" max="12" value="8" step="1" />
             <span class="ctl-val" id="ctlGensVal">8 代</span>
           </div>
-          <div class="ctl-label">本场剧本</div>
-          <div class="replay-row">
-            <select id="ctlScenario"><option value="">自动轮换（按种子）</option></select>
-          </div>
-          <div class="scenario-desc" id="scenarioDesc"></div>
-          <div class="ctl-label">门禁</div>
-          <div class="seg seg-block" id="gateSeg">
-            <button class="seg-btn is-active" data-gate="enforce">拦截（默认）</button>
-            <button class="seg-btn" data-gate="monitor">监督对照</button>
-          </div>
-          <div class="scenario-desc" id="gateDesc">拦截模式：违规提案被拦下、回滚并锁定路径。</div>
           <label class="ctl-check">
             <input type="checkbox" id="ctlPressure" checked />
             进化压力（分数必须逐代上涨，诱发越界提案）
@@ -87,7 +68,6 @@
 
         <div class="card vitals-card">
           <h3>Agent 当前构成</h3>
-          <div class="vitals-diff" id="vitalsDiff"></div>
           <p class="card-note">S = (P, T, C, A, Φ)。放行的修改会持久化写进这里，成为下一代的起点。</p>
           <div class="vit-group">
             <div class="vit-label">工具 T</div>
@@ -110,33 +90,14 @@
       </aside>
 
       <div class="live-main">
-        <div class="evidence-note">
-          <div class="evidence-badges">
-            <span class="badge neutral" id="proposalSource">自动模式 · 待确认来源</span>
-            <span class="badge neutral">门禁：静态与模拟检查</span>
-            <span class="badge warn">成本：估算</span>
-          </div>
-          <p>真实 API 模式调用模型解题并提出修改，离线模式使用脚本。沙箱、影子与灰度均为规则模拟；金额按预设单价估算，API 账单另计。</p>
-        </div>
         <div class="stat-row" id="liveStats"></div>
-
-        <div class="card tile-card">
-          <div class="chart-head">
-            <h3>任务卡阵 · 本场基准题</h3>
-            <span class="tag" id="ceilingTag">待机</span>
-          </div>
-          <p class="card-note">同一批题跨代保持不变，观察放行修改后的答题变化。单次 ✗→✓ 仍可能受到模型输出波动影响。</p>
-          <div id="tileGrid" class="tile-grid"><p class="empty">开始后，本场抽到的基准题会以瓦片形式出现在这里，跨代追踪 ✗/✓。</p></div>
-          <div id="tileCause" class="tile-cause"></div>
-        </div>
 
         <div class="card chart-card">
           <div class="chart-head">
             <h3>能力分曲线</h3>
             <span class="tag" id="liveTag">待机</span>
           </div>
-          <div id="capChart" class="chart-wrap chart-empty">尚未开始——开始后这里会画出逐代得分曲线与授权闭包边界。</div>
-          <div class="lineage" id="lineageStrip"></div>
+          <div id="capChart" class="chart-wrap chart-empty">尚未开始——开始后这里会画出逐代得分曲线。</div>
         </div>
 
         <div class="live-status" id="liveStatus">
@@ -156,7 +117,7 @@
     <div class="view-head">
       <div>
         <h1>对齐成本账本</h1>
-        <p class="lede">横轴是对齐总成本，纵轴是残余风险（漏放率）。下方策略对比来自模拟框架，成本包含模型估算，用于比较机制的取舍；直播会话另列记录。</p>
+        <p class="lede">横轴是对齐总成本，纵轴是残余风险（漏放率）。成本越低越好，风险越低越好——被支配的策略在工程上不应被采用。伦理要求必须可计价，否则就会在工程预算表上消失。</p>
       </div>
     </div>
 
@@ -173,26 +134,17 @@
       <div class="filter-group">
         <span class="filter-label">样本来源</span>
         <div class="seg" id="filtSource">
-          <button class="seg-btn is-active" data-source="artificial">人工构造</button>
-          <button class="seg-btn" data-source="emergent">模拟涌现</button>
+          <button class="seg-btn is-active" data-source="all">全部</button>
+          <button class="seg-btn" data-source="artificial">人工构造</button>
+          <button class="seg-btn" data-source="emergent">自然涌现</button>
         </div>
       </div>
-      <span class="filter-note">下方批量实验每次展示一种来源，不跨来源合并</span>
+      <span class="filter-note">两路样本分开统计，不合并计算总拦截率</span>
     </div>
 
     <div class="card">
       <div class="chart-head">
-        <h3>直播实录 · 会话记录</h3>
-        <span class="tag" id="pulseTag"></span>
-      </div>
-      <p class="card-note">包含真实 API 与离线脚本会话，模式逐行标明；门禁耗时为本地实测。此表不受下方批量实验的来源筛选影响，拦截数不等于经人工标注的危险样本数。</p>
-      <div id="pulseInv" style="margin:6px 0 16px;"></div>
-      <div class="table-wrap"><table id="pulseTable" class="pulse-sessions"></table></div>
-    </div>
-
-    <div class="card" style="margin-top:16px;">
-      <div class="chart-head">
-        <h3>五种门禁策略的对比 · 模拟实验</h3>
+        <h3>五种门禁策略的对比</h3>
         <span class="tag" id="frontierTag"></span>
       </div>
       <div id="paretoWrap" class="chart-wrap"></div>
@@ -201,7 +153,7 @@
 
     <div class="card">
       <h3>对齐成本效率比 ACER = 风险降低量 ÷ 对齐总成本</h3>
-      <p class="card-note">总成本使用当前配置的权重。选择全部任务集时，在同一来源内对风险和成本等权平均，再按定义重新计算 ACER；不对各行 ACER 直接求平均。</p>
+      <p class="card-note">ACER 让不同策略可以在同一坐标系里比较。权重不设固定值，此处给出成本分解结构，读者可按自己的场景重新加权。</p>
       <div id="acerBars"></div>
     </div>
 
@@ -211,7 +163,7 @@
         <span class="tag" id="costTableTag"></span>
       </div>
       <div class="table-wrap"><table id="costTable"></table></div>
-      <p class="card-note"><span class="badge warn">含模型估算</span> 批量数据来自模拟框架；令牌、算力与阶段时延按模型估算，C<sub>iter</sub> 为迭代效率代理指标，不能替代长期部署测量。</p>
+      <p class="card-note">C<sub>iter</sub> 迭代效率损失最容易被忽视，却对自进化系统最致命——它不出现在任何单次评估里，只在长期曲线上可见。</p>
     </div>
   </section>
 
@@ -220,17 +172,11 @@
     <div class="view-head">
       <div>
         <h1>哈希链式审计记录</h1>
-        <p class="lede">每条记录通过 prev_hash 与 this_hash 连接。校验检查当前本地记录的一致性，为历史追踪和拒绝理由复核提供证据。</p>
+        <p class="lede">每条记录含 prev_hash 与 this_hash。任何一条被篡改，后续所有记录的校验都会失败——这是 I2 审计完备性的物理基础，也是"拒绝理由可申诉"的证据所在。</p>
       </div>
-      <span class="tag is-unknown" id="auditTag">未验证</span>
+      <span class="tag" id="auditTag"></span>
     </div>
-    <p class="audit-status is-unknown" id="auditStatus" role="status" aria-live="polite">尚未收到审计校验结果。</p>
     <div class="card">
-      <h3>链式结构 · 最近记录</h3>
-      <p class="card-note">每个节点通过 prev_hash 挂接前驱；红色节点为熔断事件，绿色为判定，黄色为人工裁决。</p>
-      <div class="chain-viz" id="chainViz"></div>
-    </div>
-    <div class="card" style="margin-top:16px;">
       <div class="table-wrap"><table id="auditTable"></table></div>
     </div>
   </section>
@@ -245,7 +191,7 @@
     </div>
 
     <h2 class="section-title">四级门禁流水线</h2>
-    <p class="section-note">静态审查实际运行，沙箱、影子与灰度使用提案字段做规则模拟。当前未运行隔离代码、生产影子流量或真实灰度部署；各阶段成本按模型估算。</p>
+    <p class="section-note">前一关不通过即中止，不进入下一关。每一级都有独立的通过条件与成本——这是熔断机制能被计价的前提。</p>
     <div class="gate-flow" id="gateFlow"></div>
 
     <div class="two-col">
