@@ -1,0 +1,65 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 运行期产物（可重新生成，不入库） ----------
+# 审计链：每次运行都会重写，体量大且属于运行痕迹
+data/audit/
+# 临时日志与校验产物
+data/*.log
+data/*.json
+# 危险修改样本集（启动时自动再生成）
+/data/datasets/
+# 演示会话事件流与运行时状态
+/data/state/
+# 本地个人信息清单（扫描器用，绝不入库）
+data/pii_patterns.local.txt
+data/bat_out.txt
+data/launcher_test.log
+# LaTeX 编译中间产物
+build/
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 单元测试（本地开发用，不影响项目运行）
+/tests/
+# 第三方参考仓库（本地克隆）
+/dgm/
+
+# ---------- 本地工具（不属于课题交付物，不入公开仓库） ----------
+# 个人信息防漏自检：推送前跑 tools/scan_pii.py，确认没有误提交开题报告或实验结果
+tools/scan_pii.py
+tools/verify_remote.py
+tools/push_via_api.py
+
+# ---------- 未公开发表的研究产物（不得进入公开仓库） ----------
+# 开题报告正文（PDF 与 LaTeX 源文件）
+*.pdf
+proposal.tex
+# 实验原始逐次记录（大体积，可由 tools/final_run.py 再生成；
+# 精简汇总 summary/frontier/ablation/calibration 随库分发）
+data/results/raw_*.json
+# 自动生成的结论文档（含实测数字）
+docs/实验结果与研究结论.md
+# 内部推进计划（含未发表的选题策略与差异化方案）
+推进计划.md
+
+# ---------- Live demo & secrets ----------
+# LLM API key configuration (written by tools/configure_api.py)
+configs/api.yaml
+# Live session event streams
+/data/live/

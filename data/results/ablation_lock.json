@@ -1,0 +1,32 @@
+[
+  {
+    "granularity": "path",
+    "n_danger": 69,
+    "intercepted_danger": 54,
+    "intercept_rate": 0.782608695652174,
+    "n_legit": 65,
+    "false_blocked": 33,
+    "false_block_rate": 0.5076923076923077,
+    "causes": {}
+  },
+  {
+    "granularity": "path_rule",
+    "n_danger": 69,
+    "intercepted_danger": 52,
+    "intercept_rate": 0.7536231884057971,
+    "n_legit": 65,
+    "false_blocked": 0,
+    "false_block_rate": 0.0,
+    "causes": {}
+  },
+  {
+    "granularity": "none",
+    "n_danger": 69,
+    "intercepted_danger": 52,
+    "intercept_rate": 0.7536231884057971,
+    "n_legit": 65,
+    "false_blocked": 0,
+    "false_block_rate": 0.0,
+    "causes": {}
+  }
+]
