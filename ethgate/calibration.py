@@ -516,8 +516,7 @@ def _flatten_records(records: Sequence[dict]) -> list[dict]:
         if "fnr" in rec and "false_block_rate" in rec:
             flat.append(
                 {
-                    "strictness": rec.get("strictness"),
-                    "strategy": rec.get("strategy", ""),
+                    "strictness": rec.get("strictness", rec.get("strategy", 0.0)),
                     "fnr_direct": float(rec.get("fnr", 0.0)),
                     "fpr_direct": float(rec.get("false_block_rate", 0.0)),
                     "cost_direct": float(rec.get("c_ali", 0.0)),
@@ -531,83 +530,117 @@ def _flatten_records(records: Sequence[dict]) -> list[dict]:
 def calibrate_on_records(
     records: list[dict], fnr_max: float, fpr_max: float
 ) -> dict[str, Any]:
-    """按任务集/样本来源分别选择实际测过的策略，不插值虚构门禁。
+    """从实验原始记录按严格度分组统计 FNR/FPR，再做带约束标定。
 
-    strictness 只保留作兼容标识，不假定不同策略具有单调次序。
-    这里报告的是样本内观测约束，不能代替独立测试集上的风险保证。
+    分组依据是记录里的严格度字段（运行器写入 strategy.strictness）；
+    若记录没有该字段，则按策略名映射到固定的严格度位置。
     """
-    from .strategies import STRICTNESS_BY_STRATEGY
+    from .strategies import STRICTNESS_BY_STRATEGY  # 延迟导入避免循环依赖
+
     flat = _flatten_records(records)
-    buckets: dict[tuple, dict[str, Any]] = {}
+    if not flat:
+        return {
+            "theta": None, "fnr": None, "fpr": None, "cost": None,
+            "feasible": False, "escalate": True, "iterations": 0, "trace": [],
+            "message": "没有可用于标定的实验记录（缺少 mod_records 或 ground_truth）。",
+            "fnr_max": fnr_max, "fpr_max": fpr_max, "relaxed": False,
+            "n_evaluations": 0, "groups": [],
+        }
+
+    buckets: dict[float, dict[str, Any]] = {}
     for item in flat:
-        strategy = str(item.get("strategy", ""))
         raw_strict = item.get("strictness")
+        if raw_strict is None:
+            raw_strict = STRICTNESS_BY_STRATEGY.get(str(item.get("strategy", "")), 0.5)
         try:
-            strict = float(raw_strict)
-        except (ValueError, TypeError):
-            strict = STRICTNESS_BY_STRATEGY.get(strategy, 0.5)
-        suite, source = str(item.get("suite", "")), str(item.get("source", ""))
-        key = (suite, source, strategy, strict)
-        b = buckets.setdefault(key, {
-            "suite": suite, "source": source, "strategy": strategy, "strictness": strict,
-            "n": 0, "n_dangerous": 0, "n_legit": 0, "passed_dangerous": 0,
-            "blocked_legit": 0, "cost_sum": 0.0, "cost_n": 0,
-        })
-        if "fnr_direct" in item:
-            b["n_direct"] = b.get("n_direct", 0) + 1
-            b["fnr_direct"] = b.get("fnr_direct", 0.0) + item["fnr_direct"]
-            b["fpr_direct"] = b.get("fpr_direct", 0.0) + item["fpr_direct"]
-            b["cost_sum"] += item["cost_direct"]
-            b["cost_n"] += 1
+            strict = round(float(raw_strict), 3)
+        except (TypeError, ValueError):
+            strict = 0.5
+        b = buckets.setdefault(
+            strict,
+            {"strictness": strict, "n": 0, "n_dangerous": 0, "n_legit": 0,
+             "passed_dangerous": 0, "blocked_legit": 0, "cost_sum": 0.0,
+             "cost_n": 0},
+        )
+        if "fnr_direct" in item:  # 汇总行（只有 FNR/FPR，没有逐条明细）
             b["n"] += 1
+            b["n_direct"] = b.get("n_direct", 0) + 1
+            b["fnr_direct"] = b.get("fnr_direct", 0.0) + float(item["fnr_direct"])
+            b["fpr_direct"] = b.get("fpr_direct", 0.0) + float(item["fpr_direct"])
+            b["cost_sum"] += float(item.get("cost_direct", 0.0))
+            b["cost_n"] += 1
             continue
         gt = str(item.get("ground_truth", ""))
-        if gt not in ("dangerous", "legit", "safe"):
-            continue
-        action = str(item.get("action_key", item.get("action", ""))).upper()
-        # 与 runner 保持一致：危险提案未生效均计拦截，合法 SANDBOX 单列而非硬误拦。
-        blocked = item.get("blocked", action not in ("PASS", "放行", ""))
-        hard_blocked = action in ("REJECT", "ESCALATE", "拒绝", "上报") if action else bool(blocked)
+        action = str(item.get("action_key", item.get("action", "")))
+        blocked = item.get("blocked")
+        if blocked is None:
+            blocked = action.upper() not in ("PASS", "放行", "")
         b["n"] += 1
         if gt == "dangerous":
             b["n_dangerous"] += 1
-            b["passed_dangerous"] += int(not blocked)
+            if not blocked:
+                b["passed_dangerous"] += 1
         else:
             b["n_legit"] += 1
-            b["blocked_legit"] += int(hard_blocked)
-        if item.get("c_ali") is not None:
-            b["cost_sum"] += float(item["c_ali"])
+            if blocked:
+                b["blocked_legit"] += 1
+        cost = item.get("c_ali")
+        if cost is not None:
+            b["cost_sum"] += float(cost)
             b["cost_n"] += 1
-    groups = []
-    for key, b in sorted(buckets.items(), key=lambda pair: (pair[0][0], pair[0][1], pair[0][3], pair[0][2])):
-        fnr = (b["passed_dangerous"] / b["n_dangerous"] if b["n_dangerous"]
-               else b.get("fnr_direct", 0.0) / b["n_direct"] if b.get("n_direct") else None)
-        fpr = (b["blocked_legit"] / b["n_legit"] if b["n_legit"]
-               else b.get("fpr_direct", 0.0) / b["n_direct"] if b.get("n_direct") else None)
-        groups.append({k: b[k] for k in ("suite", "source", "strategy", "strictness", "n", "n_dangerous", "n_legit")} |
-                      {"fnr": fnr, "fpr": fpr, "cost": b["cost_sum"] / b["cost_n"] if b["cost_n"] else None})
-    partitions = []
-    keys = sorted({(g["suite"], g["source"]) for g in groups})
-    for suite, source in keys:
-        candidates = [g for g in groups if (g["suite"], g["source"]) == (suite, source)]
-        feasible = [g for g in candidates if g["fnr"] is not None and g["fpr"] is not None
-                    and g["cost"] is not None and g["fnr"] <= fnr_max and g["fpr"] <= fpr_max]
-        best = min(feasible, key=lambda g: (g["cost"], g["strictness"], g["strategy"])) if feasible and len(candidates) >= 2 else None
-        partitions.append({
-            "suite": suite, "source": source, "feasible": best is not None, "escalate": best is None,
-            "theta": best["strictness"] if best else None, "strategy": best["strategy"] if best else None,
-            "fnr": best["fnr"] if best else None, "fpr": best["fpr"] if best else None,
-            "cost": best["cost"] if best else None, "candidates": candidates,
-        })
-    single = partitions[0] if len(partitions) == 1 else {}
-    feasible = bool(partitions) and all(p["feasible"] for p in partitions)
-    return {
-        "method": "observed_discrete_strategy_selection", "theta": single.get("theta"),
-        "strategy": single.get("strategy"), "fnr": single.get("fnr"), "fpr": single.get("fpr"),
-        "cost": single.get("cost"), "feasible": feasible, "escalate": not feasible,
-        "iterations": len(groups), "n_evaluations": len(groups), "trace": groups, "groups": groups,
-        "partitions": partitions, "fnr_max": fnr_max, "fpr_max": fpr_max, "relaxed": False,
-        "label_basis": "scanner_rule_proxy_not_independent_human_ground_truth",
-        "message": ("仅在已测离散策略中按任务集/来源分别选取满足样本内约束的最低成本项；不对中间严格度插值。"
-                    if feasible else "至少一个任务集/来源未发现满足约束的已测策略，或对照不足；不放宽约束，交由人类处理。"),
-    }
+
+    groups: list[dict[str, Any]] = []
+    for strict in sorted(buckets):
+        b = buckets[strict]
+        if b.get("n_dangerous"):
+            fnr = b["passed_dangerous"] / b["n_dangerous"]
+        elif b.get("n_direct"):
+            fnr = b["fnr_direct"] / b["n_direct"]
+        else:
+            fnr = 0.0
+        if b.get("n_legit"):
+            fpr = b["blocked_legit"] / b["n_legit"]
+        elif b.get("n_direct"):
+            fpr = b["fpr_direct"] / b["n_direct"]
+        else:
+            fpr = 0.0
+        groups.append(
+            {
+                "strictness": strict,
+                "n": b["n"],
+                "n_dangerous": b["n_dangerous"],
+                "n_legit": b["n_legit"],
+                "fnr": fnr,
+                "fpr": fpr,
+                "cost": (b["cost_sum"] / b["cost_n"]) if b["cost_n"] else 0.0,
+            }
+        )
+
+    if len(groups) < 2:
+        return {
+            "theta": None, "fnr": None, "fpr": None, "cost": None,
+            "feasible": False, "escalate": True, "iterations": 0, "trace": [],
+            "message": (
+                f"严格度分组只有 {len(groups)} 组，无法拟合 FNR/FPR 曲线，"
+                "请至少提供两个严格度档位的记录。"
+            ),
+            "fnr_max": fnr_max, "fpr_max": fpr_max, "relaxed": False,
+            "n_evaluations": 0, "groups": groups,
+        }
+
+    thetas = [g["strictness"] for g in groups]
+    problem = EmpiricalCalibrationProblem(
+        kind="empirical",
+        seed=0,
+        drift=0.0,
+        theta_min=min(thetas),
+        theta_max=max(thetas),
+        groups=groups,
+    )
+    result = calibrate(problem, fnr_max, fpr_max, iterations=40, seed=0)
+    result["groups"] = groups
+    levels = ", ".join(f"{g['strictness']:.2f}" for g in groups)
+    result["message"] = (
+        result["message"] + f"（按 {len(groups)} 个严格度档位统计：{levels}）"
+    )
+    return result
