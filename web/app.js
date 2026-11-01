@@ -13,6 +13,12 @@ const L = {
   running: false, es: null, sessionId: null, mode: 'auto',
   scores: [], stats: { passed: 0, blocked: 0, api_tokens: 0 },
   cost: 0, elapsed: 0, replayToken: 0, finished: false, taskCount: 0,
+  tiles: { ids: [], kinds: {}, ok: {} },   // 任务卡阵：跨代追踪每道题 ✗/✓
+  lineage: [],                              // 逐代谱系：变化图标 + 分数
+  lastApplied: null,                        // 最近一次放行（翻转因果标注）
+  lastAppliedKind: null,
+  prevVitals: null,                         // 上一代 vitals 快照（差分用）
+  ceiling: null,                            // 授权闭包边界（%）
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -115,7 +121,10 @@ function renderLiveStats() {
     { label: '已进化', value: `${L.scores.length} 代`, sub: L.sessionId && L.running ? '进行中' : (L.finished ? '本场结束' : '待机') },
     { label: '拦截', value: L.stats.blocked, sub: '危险修改被阻断', cls: L.stats.blocked ? 'is-fail' : '' },
     { label: '放行', value: L.stats.passed, sub: '合法修改已生效', cls: 'is-pass' },
-    { label: '能力分', value: best === null ? '—' : best, sub: first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : `基准评测 ${L.taskCount || 6} 题` },
+    { label: '能力分', value: best === null ? '—' : best,
+      sub: L.ceiling !== null
+        ? (first !== null && best !== first ? `首代 ${first} → 现在 ${best} · 上限 ${L.ceiling}` : `基准 ${L.taskCount || 6} 题 · 上限 ${L.ceiling}`)
+        : (first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : `基准评测 ${L.taskCount || 6} 题`) },
     { label: '审查开销', value: `$${fmt(L.cost, 4)}`, sub: `门禁墙钟 ${fmt(L.elapsed, 2)}s · 会话 API ${L.stats.api_tokens} tok` },
   ];
   const row = $('#liveStats');
@@ -130,6 +139,105 @@ function renderLiveStats() {
     $$('#liveStats .stat-value').forEach((el, i) => animateValue(el, tiles[i] ? String(tiles[i].value) : el.textContent));
   }
   row.dataset.rendered = '1';
+}
+
+/* ---------- 任务卡阵：✗→✓ 翻转即自进化的直接证据 ---------- */
+
+const KIND_SHORT = {
+  "知识题": "知识", "推理题": "推理", "精确计算": "计算", "限时计算": "限时计算",
+  "精确统计": "统计", "限时统计": "限时统计", "格式约束": "格式", "文本检索": "检索",
+  "联网检索": "联网", "知识库检索": "知识库", "系统查询": "系统", "时钟查询": "时钟",
+  "单位换算": "换算", "基准·数学": "GSM8K",
+};
+
+function renderTiles(flips, cause) {
+  const grid = $('#tileGrid');
+  if (!grid) return;
+  if (!L.tiles.ids.length) {
+    grid.innerHTML = '<p class="empty">开始后，本场抽到的基准题会以瓦片形式出现在这里，跨代追踪 ✗/✓。</p>';
+    $('#tileCause').textContent = '';
+    return;
+  }
+  grid.innerHTML = L.tiles.ids.map((id) => {
+    const st = L.tiles.ok[id];
+    const state = st === true ? 'pass' : st === false ? 'fail' : 'unknown';
+    const mark = st === true ? '✓' : st === false ? '✗' : '·';
+    const flip = (flips || []).includes(id) ? ' flip' : '';
+    const kind = L.tiles.kinds[id] || KIND_SHORT[id] || '';
+    return `<div class="tile ${state}${flip}" title="${esc(id)} · ${esc(kind)}"
+      data-id="${esc(id)}"><b>${mark}</b><span>${esc(KIND_SHORT[kind] || kind || id.slice(0, 6))}</span></div>`;
+  }).join('');
+  const causeEl = $('#tileCause');
+  if (flips && flips.length) {
+    const names = flips.map((id) => `「${KIND_SHORT[L.tiles.kinds[id]] || L.tiles.kinds[id] || id}」`).join('、');
+    causeEl.innerHTML = (cause ? `第 ${cause.gen} 代「${esc(cause.note)}」生效 → ` : '')
+      + `<strong>${names} 由 ✗ 翻转为 ✓</strong> —— 这就是"修改持久化、参与后续决策"。`;
+    causeEl.classList.add('is-hot');
+  } else if (causeEl.classList.contains('is-hot')) {
+    // 保留最近一次翻转说明，但降调
+    causeEl.classList.remove('is-hot');
+  }
+}
+
+/* ---------- 谱系条：G1→Gn 的变化标记 ---------- */
+
+const KIND_ICON = { add_tool: '🔧', edit_prompt: '📜', edit_code: '⚡', remove_rule: '⚠', weaken_rule: '⚠' };
+
+function renderLineage() {
+  const strip = $('#lineageStrip');
+  if (!strip) return;
+  if (!L.lineage.length) { strip.innerHTML = ''; return; }
+  strip.innerHTML = L.lineage.map((g, i) => {
+    const icon = g.blocked ? '🔴' : g.observe ? '·' : (KIND_ICON[g.kind] || '✚');
+    const cls = g.blocked ? 'is-blocked' : g.observe ? 'is-observe' : 'is-applied';
+    const prev = i > 0 ? L.lineage[i - 1].score : null;
+    const delta = prev !== null ? g.score - prev : null;
+    const deltaTxt = delta === null ? '' : ` <em>${delta > 0 ? '+' : ''}${delta}</em>`;
+    return `${i ? '<span class="lg-link"></span>' : ''}
+      <button class="lg-node ${cls}" data-gen="${g.gen}" title="第 ${g.gen} 代 · ${g.score} 分${deltaTxt ? ' · 变化 ' + delta : ''}">
+        <i>${icon}</i><b>G${g.gen}</b><span>${g.score}${deltaTxt}</span>
+      </button>`;
+  }).join('');
+  strip.querySelectorAll('.lg-node').forEach((n) => n.addEventListener('click', () => {
+    const card = document.querySelector(`.evo-card[data-gen="${n.dataset.gen}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.remove('is-flash');
+      void card.offsetWidth;
+      card.classList.add('is-flash');
+    }
+  }));
+}
+
+/* ---------- 代际差分 chips ---------- */
+
+function diffChips(prev, curr) {
+  if (!prev) return [];
+  const out = [];
+  const added = (a, b) => (b || []).filter((x) => !(a || []).includes(x));
+  const removedN = (a, b) => (a || []).filter((x) => !(b || []).includes(x)).length;
+  added(prev.tools, curr.tools).forEach((tl) => out.push(`+🔧 ${tl}`));
+  const pa = added(prev.prompts, curr.prompts).length;
+  const pr = removedN(prev.prompts, curr.prompts);
+  if (pa) out.push(`+📜 提示×${pa}`);
+  if (pr) out.push(`−📜 提示×${pr}`);
+  Object.keys(curr.params || {}).forEach((k) => {
+    if ((prev.params || {})[k] !== curr.params[k]) out.push(`⚡ ${k}→${curr.params[k]}`);
+  });
+  const ca = added(prev.constraints, curr.constraints).length;
+  const cr = removedN(prev.constraints, curr.constraints);
+  if (cr) out.push(`Φ−${cr}`);
+  if (ca) out.push(`Φ+${ca}`);
+  return out;
+}
+
+function renderVitalsDiff(prev, curr) {
+  const box = $('#vitalsDiff');
+  if (!box) return;
+  const chips = diffChips(prev, curr);
+  box.innerHTML = chips.length
+    ? `<span class="chip chip-code">v${curr.code_version}</span>` + chips.map((c) => `<span class="chip chip-diff">${esc(c)}</span>`).join('')
+    : (curr ? `<span class="chip chip-code">v${curr.code_version}</span><span class="chip">无构成变化</span>` : '');
 }
 
 function renderCapChart() {
@@ -151,6 +259,12 @@ function renderCapChart() {
       <text x="${PAD.l - 8}" y="${y(v) + 4}" font-size="10.5" fill="${P.text}" text-anchor="end" font-family="JetBrains Mono,monospace">${v}</text>`;
   });
   svg += `<line x1="${PAD.l}" y1="${y(0)}" x2="${W - PAD.r}" y2="${y(0)}" stroke="${P.axis}"/>`;
+  // 授权闭包边界：需要未授权工具的题在本场永远无解——曲线的天花板由伦理约束决定
+  if (L.ceiling !== null && L.ceiling > 0) {
+    const cy = y(Math.min(100, L.ceiling));
+    svg += `<line x1="${PAD.l}" y1="${cy}" x2="${W - PAD.r}" y2="${cy}" stroke="#ff5468" stroke-width="1.2" stroke-dasharray="7 5" opacity="0.75"/>
+      <text x="${W - PAD.r - 4}" y="${cy - 7}" font-size="10" fill="#ff5468" text-anchor="end" font-family="JetBrains Mono,monospace">授权闭包边界 ${L.ceiling}%</text>`;
+  }
   // 面积
   const pts = L.scores.map((s, i) => `${x(i)},${y(s)}`);
   svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="${P.area}"/>`;
@@ -197,6 +311,7 @@ function addCard(evt) {
   const costAbs = (v.detail && v.detail.cost_absolute) || {};
   const card = document.createElement('div');
   card.className = `evo-card ${cls}`;
+  card.dataset.gen = evt.gen;
   card.innerHTML = `
     <div class="evo-head">
       <span class="evo-icon">${icon}</span>
@@ -238,8 +353,14 @@ function handleEvent(evt) {
       L.sessionId = evt.session_id;
       L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
       L.cost = 0; L.elapsed = 0; L.taskCount = evt.task_count || 6;
+      L.tiles = { ids: evt.task_ids || [], kinds: evt.task_kinds || {}, ok: {} };
+      L.lineage = []; L.lastApplied = null; L.lastAppliedKind = null;
+      L.prevVitals = null; L.ceiling = (evt.ceiling === undefined) ? null : evt.ceiling;
       L.running = true; L.finished = false;
       clearStream(); renderLiveStats(); renderCapChart(); renderVitals(evt.vitals);
+      renderTiles(); renderLineage();
+      $('#ceilingTag').textContent = L.ceiling !== null
+        ? `授权闭包边界 ${L.ceiling}%` : '待机';
       $('#liveTag').textContent = evt.mode === 'live'
         ? `LIVE · ${evt.provider || ''} ${evt.model || ''}`.trim() : 'LIVE · 离线演示';
       $('#liveTag').classList.add('is-live');
@@ -260,10 +381,20 @@ function handleEvent(evt) {
     case 'task':
       setStatus(`第 ${evt.gen} 代 · ${evt.task} ${evt.ok ? '✓' : '✗'} ${evt.brief || ''}`);
       break;
+    case 'tasks': {
+      // 任务卡阵：同批题跨代追踪，检测 ✗→✓ 翻转（自进化的直接证据）
+      const res = {};
+      (evt.results || []).forEach((r) => { res[r.id] = !!r.ok; });
+      const flips = L.tiles.ids.filter((id) => L.tiles.ok[id] === false && res[id] === true);
+      L.tiles.ok = res;
+      renderTiles(flips, L.lastApplied);
+      break;
+    }
     case 'phase':
       setStatus(evt.text || '');
       break;
     case 'proposal':
+      L.lastAppliedKind = (evt.raw && evt.raw.kind) || null;
       setStatus(`第 ${evt.gen} 代：门禁审查中 —— ${evt.note || ''}`);
       break;
     case 'blocked':
@@ -272,6 +403,7 @@ function handleEvent(evt) {
       const abs = (v.detail && v.detail.cost_absolute) || {};
       L.cost += Number(abs.comp_cost || 0);
       L.elapsed += Number(abs.elapsed_s || 0);
+      if (evt.type === 'applied') L.lastApplied = { gen: evt.gen, note: evt.note || '' };
       addCard(evt);
       setStatus(`第 ${evt.gen} 代：判定完成 —— ${v.action}`);
       break;
@@ -279,7 +411,15 @@ function handleEvent(evt) {
     case 'gen_end':
       L.scores.push(Number(evt.score) || 0);
       if (evt.stats) L.stats = evt.stats;
-      renderLiveStats(); renderCapChart(); renderVitals(evt.vitals);
+      L.lineage.push({
+        gen: evt.gen, score: Number(evt.score) || 0,
+        kind: L.lastAppliedKind,
+        blocked: evt.action === '拒绝' || evt.action === '上报',
+        observe: !evt.action,
+      });
+      renderLiveStats(); renderCapChart(); renderLineage();
+      renderVitalsDiff(L.prevVitals, evt.vitals);
+      L.prevVitals = evt.vitals;
       break;
     case 'error':
       setStatus(`出错：${evt.message || '未知错误'}`, 'is-error');
@@ -351,8 +491,10 @@ async function replaySession(sid) {
   const events = data.events || [];
   // 重置界面后按序回放
   L.sessionId = sid; L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
-  L.cost = 0; L.running = false; L.finished = false;
-  clearStream(); renderLiveStats(); renderCapChart();
+  L.cost = 0; L.elapsed = 0; L.running = false; L.finished = false;
+  L.tiles = { ids: [], kinds: {}, ok: {} }; L.lineage = [];
+  L.lastApplied = null; L.lastAppliedKind = null; L.prevVitals = null; L.ceiling = null;
+  clearStream(); renderLiveStats(); renderCapChart(); renderTiles(); renderLineage();
   $('#liveTag').textContent = '回放 · ' + sid;
   setStatus(`回放 ${sid}（${events.length} 个事件）…`);
   $('#btnStart').classList.remove('is-hidden');
