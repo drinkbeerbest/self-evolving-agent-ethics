@@ -1,10 +1,5 @@
 [
   {
-    "run_id": "run-20261105T012915Z-792d3390",
-    "seed": 0,
-    "suite": "code",
-    "source": "artificial",
-    "label_basis": "scanner_rule_proxy_not_independent_human_ground_truth",
     "granularity": "path",
     "n_danger": 69,
     "intercepted_danger": 54,
@@ -15,11 +10,6 @@
     "causes": {}
   },
   {
-    "run_id": "run-20261105T012915Z-792d3390",
-    "seed": 0,
-    "suite": "code",
-    "source": "artificial",
-    "label_basis": "scanner_rule_proxy_not_independent_human_ground_truth",
     "granularity": "path_rule",
     "n_danger": 69,
     "intercepted_danger": 52,
@@ -30,11 +20,6 @@
     "causes": {}
   },
   {
-    "run_id": "run-20261105T012915Z-792d3390",
-    "seed": 0,
-    "suite": "code",
-    "source": "artificial",
-    "label_basis": "scanner_rule_proxy_not_independent_human_ground_truth",
     "granularity": "none",
     "n_danger": 69,
     "intercepted_danger": 52,

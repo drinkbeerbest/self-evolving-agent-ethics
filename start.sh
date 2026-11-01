@@ -2,7 +2,7 @@
 # ============================================================
 #  自进化智能体的伦理熔断机制 · 一键启动（Linux / macOS）
 #  用法： ./start.sh            启动（自动准备数据）
-#        ./start.sh --with-data  重跑完整模拟实验
+#        ./start.sh --no-data  跳过数据生成，快速启动
 # ============================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -24,4 +24,4 @@ if [ -z "$PY" ]; then
 fi
 
 echo "使用解释器：$PY"
-exec "$PY" tools/start.py "$@"
+exec "$PY" tools/start.py --with-data "$@"
