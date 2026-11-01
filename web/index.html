@@ -81,6 +81,7 @@
 
         <div class="card vitals-card">
           <h3>Agent 当前构成</h3>
+          <div class="vitals-diff" id="vitalsDiff"></div>
           <p class="card-note">S = (P, T, C, A, Φ)。放行的修改会持久化写进这里，成为下一代的起点。</p>
           <div class="vit-group">
             <div class="vit-label">工具 T</div>
@@ -105,12 +106,23 @@
       <div class="live-main">
         <div class="stat-row" id="liveStats"></div>
 
+        <div class="card tile-card">
+          <div class="chart-head">
+            <h3>任务卡阵 · 本场基准题</h3>
+            <span class="tag" id="ceilingTag">待机</span>
+          </div>
+          <p class="card-note">同一批题跨代保持不变——哪块瓦片由 ✗ 翻成 ✓，哪次放行就是它的原因。这正是"修改持久化、参与后续决策"的自进化定义。</p>
+          <div id="tileGrid" class="tile-grid"><p class="empty">开始后，本场抽到的基准题会以瓦片形式出现在这里，跨代追踪 ✗/✓。</p></div>
+          <div id="tileCause" class="tile-cause"></div>
+        </div>
+
         <div class="card chart-card">
           <div class="chart-head">
             <h3>能力分曲线</h3>
             <span class="tag" id="liveTag">待机</span>
           </div>
-          <div id="capChart" class="chart-wrap chart-empty">尚未开始——开始后这里会画出逐代得分曲线。</div>
+          <div id="capChart" class="chart-wrap chart-empty">尚未开始——开始后这里会画出逐代得分曲线与授权闭包边界。</div>
+          <div class="lineage" id="lineageStrip"></div>
         </div>
 
         <div class="live-status" id="liveStatus">
