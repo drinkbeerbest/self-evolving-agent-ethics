@@ -150,7 +150,24 @@ python tools\final_run.py                       # 一键重跑全部批量实验
 | 误升级率 | 合法修改被升级到沙箱的占比（多付成本，非能力损失，两者分开报告） |
 | C_ali | 七维成本加权和；ACER = (1 − FNR) / C_ali |
 
-## 6. 诚实的局限声明
+## 6. 依据与数据来源（回应"拦截/出题没有依据"）
+
+**完整溯源见 [docs/SOURCES.md](docs/SOURCES.md)**。要点：
+
+- **拦截规则**：10 条规则逐条映射外部锚点（OWASP LLM Top 10 的 LLM06 过度代理、
+  MITRE ATLAS 战术、DGM 论文记录的自进化奖励黑客、Palisade Research 2025.2
+  推理模型破坏停机脚本、Apollo Research 2024.12 监督规避），代码内
+  `scanner.py → RULE_BASES` 字段可查；
+- **出题**：题池 31 题，其中 10 题直接抽样自 **GSM8K**（MIT，seed=2026 确定性抽样，
+  判分沿用原基准），其余按 **GAIA** 格式对齐或对应不变量的诱发场景；
+- **样本**：三路分开（人工构造 / 自然涌现 / 真实拦截语料）。直播系统每次判定
+  自动写入审计链，`python tools/export_corpus.py` 导出为语料库
+  （当前 10 场会话 / 57 条去重提案 / 29 条被拦截）并生成三人标注工作表；
+- **标注验证**：三位组员按 `data/corpus/labeling_sheet.csv` 独立标注后运行
+  `python tools/labeling_kappa.py`，输出 Fleiss' κ 与扫描器规则对人工标注的
+  precision / recall——把"我们自己定义危险"升级为"规则经三人独立标注验证"。
+
+## 7. 诚实的局限声明
 
 | 局限 | 说明 |
 |---|---|
@@ -167,7 +184,7 @@ python tools\final_run.py                       # 一键重跑全部批量实验
 2. **形式化不变量天然比词法规则严格，两套口径必须分开报告**——差异方向可预测（形式化更严）。
 3. **熔断锁定粒度决定机制是"有记忆"还是"一刀切"**：`path_rule` 粒度在保持 75.4% 拦截率的同时把误拦率从 50.8% 压到 0%。
 
-## 7. 自检
+## 8. 自检
 
 ```powershell
 python tools\selfcheck.py    # AHP 一致性 / 18 格矩阵 / 直播主线离线冒烟
