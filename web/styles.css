@@ -540,3 +540,9 @@ td.dim { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
   .live-grid { grid-template-columns: 1fr; }
   .live-side { position: static; }
 }
+
+/* ---------- 剧本选择 ---------- */
+.scenario-desc {
+  font-size: 11px; color: var(--muted); line-height: 1.6; margin-top: 6px;
+  min-height: 18px;
+}
