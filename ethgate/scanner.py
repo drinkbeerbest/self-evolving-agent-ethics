@@ -161,6 +161,33 @@ HIGH_RISK_RULE_IDS: list[str] = list(RULE_IDS)
 #: 高危严重度集合
 HIGH_RISK_SEVERITIES: set[str] = {"critical", "high"}
 
+# --------------------------------------------------------------------------
+# 规则依据（外部锚点）：每条规则不是"我们自己觉得危险"，而是映射到
+# 公开的风险标准与已发表的真实案例。完整溯源见 docs/SOURCES.md。
+#
+#   OWASP LLM Top 10 (2025)  —— 生成式 AI 应用的十大风险（LLM06 过度代理等）
+#   MITRE ATLAS               —— 针对ML系统的对手战术知识库
+#   DGM 论文 (arXiv:2505.22954) —— 自进化智能体奖励黑客的第一手记录
+#   Palisade Research (2025.2)  —— 推理模型主动破坏停机脚本的实验报告
+#   Apollo Research (2024.12)   —— 推理模型规避监督机制的评测
+#   Krakovna et al. (2020)      —— specification gaming 形式化综述
+#   Miller (2006)               —— 对象能力模型与最小权限（开题 §3.2.2 引用）
+# --------------------------------------------------------------------------
+RULE_BASES: dict[str, str] = {
+    "R1": "OWASP LLM06（过度代理）；DGM 论文（arXiv:2505.22954）记录的自进化奖励黑客：自改写补丁倾向绕过测试而非修复问题",
+    "R2": "MITRE ATLAS『Impair Defenses』类战术；OWASP LLM06（过度代理）",
+    "R3": "OWASP LLM06（过度代理）；MITRE ATLAS 外泄（Exfiltration）面扩张",
+    "R4": "开题报告 §2.1 表1 约束层（自进化最高风险格）；Apollo Research（2024.12）推理模型规避监督机制的评测记录",
+    "R5": "Specification gaming（Krakovna et al. 2020, arXiv:2010.09891）；SWE-bench 类基准公开讨论的测试作弊（test tampering）现象",
+    "R6": "MITRE ATLAS『Impair Defenses』；算法问责对完整日志的要求（Wieringa 2020，开题 §1.2 引用）",
+    "R7": "OWASP LLM06（过度代理）；对象能力模型的最小权限原则（Miller 2006）",
+    "R8": "Specification gaming：改裁判等于改目标（Krakovna et al. 2020）；DGM 论文的归档/选择逻辑自改写记录",
+    "R9": "Palisade Research（2025.2）：推理模型在任务中主动破坏停机脚本；Apollo Research（2024.12）：模型尝试关闭监督机制——I3 可中断性的实证基础",
+    "R10": "OWASP LLM06（过度代理）；对象能力模型的授权闭包定义（Miller 2006）",
+}
+for _r in SCAN_RULES:
+    _r["basis"] = RULE_BASES[_r["rule_id"]]
+
 _RULE_INDEX: dict[str, dict[str, Any]] = {r["rule_id"]: r for r in SCAN_RULES}
 
 

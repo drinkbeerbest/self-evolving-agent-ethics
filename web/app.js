@@ -4,7 +4,7 @@
 
 const S = {
   health: null, taxonomy: null, results: null, audit: null,
-  liveStatus: null,
+  liveStatus: null, pulse: null,
   filter: { suite: 'all', source: 'all' },
   activeVerdict: null,
 };
@@ -37,6 +37,38 @@ function toast(msg) {
   t.classList.add('is-show');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove('is-show'), 2600);
+}
+
+const fmtTime = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(Number(ts) * 1000);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+
+/** 数字滚动：解析 text 中的首个数字并从上一次值缓动到新值。 */
+const _statPrev = new WeakMap();
+function animateValue(el, text) {
+  const m = String(text).match(/-?\d[\d.]*/);
+  if (!m) { el.textContent = text; return; }
+  const target = parseFloat(m[0]);
+  const prev = _statPrev.get(el);
+  const prefix = text.slice(0, m.index);
+  const suffix = text.slice(m.index + m[0].length);
+  const from = (prev !== undefined && !Number.isNaN(prev)) ? prev : target;
+  _statPrev.set(el, target);
+  if (from === target || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.textContent = text; return;
+  }
+  const t0 = performance.now(), dur = 650;
+  const ease = (x) => 1 - Math.pow(1 - x, 3);
+  const step = (now) => {
+    const k = ease(Math.min(1, (now - t0) / dur));
+    const v = Math.round(from + (target - from) * k);
+    el.textContent = prefix + v + suffix;
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 const fmt = (v, d = 3) => {
@@ -75,12 +107,18 @@ function renderLiveStats() {
     { label: '能力分', value: best === null ? '—' : best, sub: first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : `基准评测 ${L.taskCount || 6} 题` },
     { label: '审查开销', value: `$${fmt(L.cost, 4)}`, sub: `门禁墙钟 ${fmt(L.elapsed, 2)}s · 会话 API ${L.stats.api_tokens} tok` },
   ];
-  $('#liveStats').innerHTML = tiles.map((t) => `
+  const row = $('#liveStats');
+  const prev = row.dataset.rendered === '1';
+  row.innerHTML = tiles.map((t) => `
     <div class="stat">
       <div class="stat-label">${esc(t.label)}</div>
       <div class="stat-value ${t.cls || ''}">${esc(t.value)}</div>
       <div class="stat-sub">${esc(t.sub)}</div>
     </div>`).join('');
+  if (prev) {
+    $$('#liveStats .stat-value').forEach((el, i) => animateValue(el, tiles[i] ? String(tiles[i].value) : el.textContent));
+  }
+  row.dataset.rendered = '1';
 }
 
 function renderCapChart() {
@@ -95,20 +133,20 @@ function renderCapChart() {
   const x = (i) => PAD.l + (iw * i) / (n - 1);
   const y = (v) => PAD.t + ih - (ih * v) / 100;
   let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-width:${W}px;display:block" xmlns="http://www.w3.org/2000/svg" role="img">
-    <rect width="${W}" height="${H}" fill="#ffffff"/>`;
+    <rect width="${W}" height="${H}" fill="#0e1014" rx="10"/>`;
   [0, 25, 50, 75, 100].forEach((v) => {
-    svg += `<line x1="${PAD.l}" y1="${y(v)}" x2="${W - PAD.r}" y2="${y(v)}" stroke="#f1f1f4"/>
-      <text x="${PAD.l - 8}" y="${y(v) + 4}" font-size="10.5" fill="#a1a1aa" text-anchor="end" font-family="JetBrains Mono,monospace">${v}</text>`;
+    svg += `<line x1="${PAD.l}" y1="${y(v)}" x2="${W - PAD.r}" y2="${y(v)}" stroke="#1c212b"/>
+      <text x="${PAD.l - 8}" y="${y(v) + 4}" font-size="10.5" fill="#565e6c" text-anchor="end" font-family="JetBrains Mono,monospace">${v}</text>`;
   });
-  svg += `<line x1="${PAD.l}" y1="${y(0)}" x2="${W - PAD.r}" y2="${y(0)}" stroke="#e4e4e7"/>`;
+  svg += `<line x1="${PAD.l}" y1="${y(0)}" x2="${W - PAD.r}" y2="${y(0)}" stroke="#2e3644"/>`;
   // 面积
   const pts = L.scores.map((s, i) => `${x(i)},${y(s)}`);
-  svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="rgba(59,130,246,0.08)"/>`;
-  svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round"/>`;
+  svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="rgba(200,240,75,0.07)"/>`;
+  svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="#c8f04b" stroke-width="2" stroke-linejoin="round" style="filter:drop-shadow(0 0 6px rgba(200,240,75,0.35))"/>`;
   L.scores.forEach((s, i) => {
-    svg += `<circle cx="${x(i)}" cy="${y(s)}" r="4" fill="#3b82f6" stroke="#fff" stroke-width="1.5"/>
-      <text x="${x(i)}" y="${y(s) - 9}" font-size="10.5" fill="#3f3f46" text-anchor="middle" font-family="JetBrains Mono,monospace">${s}</text>
-      <text x="${x(i)}" y="${H - 12}" font-size="10" fill="#a1a1aa" text-anchor="middle" font-family="JetBrains Mono,monospace">G${i + 1}</text>`;
+    svg += `<circle cx="${x(i)}" cy="${y(s)}" r="4" fill="#c8f04b" stroke="#0e1014" stroke-width="1.5"/>
+      <text x="${x(i)}" y="${y(s) - 9}" font-size="10.5" fill="#b8bec9" text-anchor="middle" font-family="JetBrains Mono,monospace">${s}</text>
+      <text x="${x(i)}" y="${H - 12}" font-size="10" fill="#565e6c" text-anchor="middle" font-family="JetBrains Mono,monospace">G${i + 1}</text>`;
   });
   svg += '</svg>';
   box.innerHTML = svg;
@@ -163,6 +201,14 @@ function addCard(evt) {
       ${costAbs.comp_cost ? `<span class="evo-cost">审查 $${fmt(costAbs.comp_cost, 4)}</span>` : ''}
     </div>`;
   card.addEventListener('click', () => openModal(v, evt));
+  const hashEl = card.querySelector('.evo-hash');
+  if (hashEl) hashEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigator.clipboard && navigator.clipboard.writeText(String(v.audit_hash || '')).then(
+      () => toast('审计哈希已复制：' + String(v.audit_hash || '').slice(0, 12)),
+      () => {},
+    );
+  });
   stream.prepend(card);
 }
 
@@ -237,6 +283,7 @@ function handleEvent(evt) {
       if (evt.mode) L.finished = true;
       if (L.es) { L.es.close(); L.es = null; }
       loadAuditOnly().catch(() => {});
+      loadPulse().catch(() => {});
       break;
   }
 }
@@ -569,6 +616,86 @@ function showCell(cell) {
 }
 
 /* ============================================================
+   直播实录聚合（/api/pulse）—— 四视图数据打通的枢纽
+   ============================================================ */
+
+async function loadPulse() {
+  try { S.pulse = await api('/api/pulse'); }
+  catch (_) { S.pulse = { sessions: [], totals: {} }; }
+  renderPulse();
+  renderHeatHits();
+}
+
+function renderPulse() {
+  const box1 = $('#pulseInv');
+  const box2 = $('#pulseTable');
+  if (!box1 || !box2) return;
+  const pulse = S.pulse || { sessions: [], totals: {} };
+  const totals = pulse.totals || {};
+  $('#pulseTag').textContent = pulse.sessions?.length
+    ? `${totals.sessions} 场 · ${totals.generations} 代 · 拦截 ${totals.blocked} / 放行 ${totals.passed}`
+    : '尚无直播会话';
+
+  // 被拦不变量分布
+  const inv = Object.entries(totals.by_invariant || {}).sort((a, b) => b[1] - a[1]);
+  const maxInv = Math.max(1, ...inv.map((x) => x[1]));
+  const invHtml = inv.length
+    ? inv.map(([k, v]) => `
+      <div class="inv-bar-row">
+        <span style="font-family:var(--font-mono);color:var(--fail)">${esc(k)}</span>
+        <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${(v / maxInv) * 100}%"></div></div>
+        <span class="inv-bar-val">${v}</span>
+      </div>`).join('')
+    : '<p class="empty">暂无拦截记录</p>';
+  const passed = totals.passed || 0;
+  const blocked = totals.blocked || 0;
+  box1.innerHTML = `
+    <div class="inv-bar-row is-pass">
+      <span style="font-family:var(--font-mono);color:var(--pass)">放行</span>
+      <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${(passed / Math.max(1, passed + blocked)) * 100}%"></div></div>
+      <span class="inv-bar-val">${passed}</span>
+    </div>
+    <div class="inv-bar-row">
+      <span style="font-family:var(--font-mono);color:var(--fail)">拦截</span>
+      <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${(blocked / Math.max(1, passed + blocked)) * 100}%"></div></div>
+      <span class="inv-bar-val">${blocked}</span>
+    </div>
+    <div style="height:12px"></div>${invHtml}`;
+
+  // 会话明细
+  const rows = (pulse.sessions || []).slice(0, 12);
+  box2.innerHTML = rows.length ? `
+    <thead><tr><th>会话</th><th>剧本</th><th>模式</th><th>代数</th><th>拦截</th><th>放行</th><th>末代分</th><th>审查开销</th><th>API tok</th></tr></thead><tbody>
+    ${rows.map((s) => `
+      <tr style="cursor:pointer" data-sid="${esc(s.session_id)}">
+        <td>${esc(s.session_id)}</td>
+        <td>${esc(s.scenario || '—')}</td>
+        <td class="dim">${esc(s.mode)}</td>
+        <td class="num">${s.generations}</td>
+        <td class="num" style="color:var(--fail)">${s.blocked}</td>
+        <td class="num" style="color:var(--pass)">${s.passed}</td>
+        <td class="num">${s.best || '—'}</td>
+        <td class="num">${fmt(s.gate_elapsed_s, 2)}s</td>
+        <td class="num">${s.api_tokens}</td>
+      </tr>`).join('')}
+    </tbody>` : '<tbody><tr><td colspan="9"><p class="empty">跑一场直播，这里就会出现真实会话的成本与判定分布</p></td></tr></tbody>';
+  box2.querySelectorAll('tr[data-sid]').forEach((tr) => tr.addEventListener('click', () => {
+    switchView('live');
+    replaySession(tr.dataset.sid);
+  }));
+}
+
+/** 附录矩阵：直播会话中被拦截格式的红色命中标记。 */
+function renderHeatHits() {
+  const cells = (S.pulse && S.pulse.totals && S.pulse.totals.blocked_cells) || {};
+  $$('#heatmap .heat-cell').forEach((el) => {
+    const n = cells[el.dataset.key] || 0;
+    el.classList.toggle('is-hit', n > 0);
+    el.title = n > 0 ? `直播累计拦截 ${n} 次` : (el.title || '');
+  });
+}
+
+/* ============================================================
    成本账本（帕累托前沿）
    ============================================================ */
 
@@ -636,33 +763,33 @@ function renderFrontier() {
   let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
     style="width:100%;height:auto;max-width:${W}px;display:block"
     xmlns="http://www.w3.org/2000/svg" role="img">
-    <rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"/>`;
+    <rect x="0" y="0" width="${W}" height="${H}" fill="#0e1014" rx="10"/>`;
   ticks(rMin, rMax).forEach((v) => {
-    svg += `<line x1="${PAD.l}" y1="${cy(v)}" x2="${W - PAD.r}" y2="${cy(v)}" stroke="#f1f1f4"/>
-      <text x="${PAD.l - 9}" y="${cy(v) + 4}" font-size="10.5" fill="#a1a1aa" text-anchor="end" font-family="JetBrains Mono,monospace">${pct(v)}</text>`;
+    svg += `<line x1="${PAD.l}" y1="${cy(v)}" x2="${W - PAD.r}" y2="${cy(v)}" stroke="#1c212b"/>
+      <text x="${PAD.l - 9}" y="${cy(v) + 4}" font-size="10.5" fill="#565e6c" text-anchor="end" font-family="JetBrains Mono,monospace">${pct(v)}</text>`;
   });
   ticks(cMin, cMax).forEach((v) => {
-    svg += `<line x1="${cx(v)}" y1="${PAD.t}" x2="${cx(v)}" y2="${PAD.t + ih}" stroke="#f1f1f4"/>
-      <text x="${cx(v)}" y="${PAD.t + ih + 18}" font-size="10.5" fill="#a1a1aa" text-anchor="middle" font-family="JetBrains Mono,monospace">${fmt(v, 2)}</text>`;
+    svg += `<line x1="${cx(v)}" y1="${PAD.t}" x2="${cx(v)}" y2="${PAD.t + ih}" stroke="#1c212b"/>
+      <text x="${cx(v)}" y="${PAD.t + ih + 18}" font-size="10.5" fill="#565e6c" text-anchor="middle" font-family="JetBrains Mono,monospace">${fmt(v, 2)}</text>`;
   });
-  svg += `<line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${W - PAD.r}" y2="${PAD.t + ih}" stroke="#e4e4e7"/>
-    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="#e4e4e7"/>
-    <text x="${PAD.l + iw / 2}" y="${H - 14}" font-size="11.5" fill="#71717a" text-anchor="middle">对齐总成本 C_ali（相对无门禁）</text>
-    <text x="16" y="${PAD.t + ih / 2}" font-size="11.5" fill="#71717a" text-anchor="middle" transform="rotate(-90 16 ${PAD.t + ih / 2})">残余风险（漏放率）</text>`;
+  svg += `<line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${W - PAD.r}" y2="${PAD.t + ih}" stroke="#2e3644"/>
+    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="#2e3644"/>
+    <text x="${PAD.l + iw / 2}" y="${H - 14}" font-size="11.5" fill="#828a99" text-anchor="middle">对齐总成本 C_ali（相对无门禁）</text>
+    <text x="16" y="${PAD.t + ih / 2}" font-size="11.5" fill="#828a99" text-anchor="middle" transform="rotate(-90 16 ${PAD.t + ih / 2})">残余风险（漏放率）</text>`;
 
   const front = pts.filter((p) => !p.dominated).sort((a, b) => a.cost - b.cost);
   if (front.length > 1) {
     const d = front.map((p, i) => `${i ? 'L' : 'M'}${cx(p.cost)},${cy(p.risk)}`).join(' ');
-    svg += `<path d="${d}" fill="none" stroke="#3b82f6" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.75"/>`;
+    svg += `<path d="${d}" fill="none" stroke="#c8f04b" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.8"/>`;
   }
   pts.forEach((p) => {
     const x = cx(p.cost), y = cy(p.risk);
-    const col = p.dominated ? '#a1a1aa' : '#3b82f6';
+    const col = p.dominated ? '#565e6c' : '#c8f04b';
     if (p.dominated) {
-      svg += `<circle cx="${x}" cy="${y}" r="7" fill="none" stroke="#a1a1aa" stroke-width="1.2" stroke-dasharray="3 2"/>`;
+      svg += `<circle cx="${x}" cy="${y}" r="7" fill="none" stroke="#565e6c" stroke-width="1.2" stroke-dasharray="3 2"/>`;
     }
-    svg += `<circle cx="${x}" cy="${y}" r="4.6" fill="${col}" stroke="#fff" stroke-width="1.6"/>
-      <text x="${x + (x > W * 0.72 ? -9 : 9)}" y="${y - 7}" font-size="11" fill="${p.dominated ? '#a1a1aa' : '#3f3f46'}" text-anchor="${x > W * 0.72 ? 'end' : 'start'}">${esc(p.display_name)}</text>`;
+    svg += `<circle cx="${x}" cy="${y}" r="4.6" fill="${col}" stroke="#0e1014" stroke-width="1.6"/>
+      <text x="${x + (x > W * 0.72 ? -9 : 9)}" y="${y - 7}" font-size="11" fill="${p.dominated ? '#565e6c' : '#b8bec9'}" text-anchor="${x > W * 0.72 ? 'end' : 'start'}">${esc(p.display_name)}</text>`;
   });
   svg += '</svg>';
   $('#paretoWrap').innerHTML = svg;
@@ -720,7 +847,25 @@ function renderAudit() {
   const recs = a.records || [];
   const v = a.verify || {};
   $('#auditTag').textContent = v.valid ? `链完整 · ${a.total} 条记录` : `链在 seq ${v.broken_at_seq} 处断裂`;
-  let t = `<thead><tr><th>seq</th><th>类型</th><th>摘要</th><th>prev</th><th>this</th></tr></thead><tbody>`;
+  const led = $('#ledChain');
+  if (led) led.className = 'led ' + (v.valid ? 'is-ok' : 'is-fail');
+
+  // 链式可视化：最近 24 条节点
+  const viz = $('#chainViz');
+  if (viz) {
+    const last = recs.slice(0, 24);
+    viz.innerHTML = last.map((r, i) => {
+      const k = r.kind === 'verdict' ? 'k-verdict' : r.kind === 'breaker' ? 'k-breaker'
+        : r.kind === 'escalate' ? 'k-escalate' : '';
+      const label = r.this_hash ? String(r.this_hash).slice(0, 4) : '----';
+      return `${i ? '<span class="chain-link"></span>' : ''}
+        <span class="chain-node ${k}" title="seq ${r.seq} · ${esc(r.kind)} · ${fmtTime(r.timestamp)}">
+          <i></i><em>${esc(label)}</em>
+        </span>`;
+    }).join('') || '<p class="empty">尚无记录</p>';
+  }
+
+  let t = `<thead><tr><th>seq</th><th>时间</th><th>类型</th><th>摘要</th><th>会话</th><th>prev</th><th>this</th></tr></thead><tbody>`;
   recs.forEach((r) => {
     const p = r.payload || {};
     let brief = '';
@@ -730,10 +875,13 @@ function renderAudit() {
     else if (r.kind === 'escalate') brief = `${p.decision || ''} · ${p.reason || ''}`;
     else brief = JSON.stringify(p).slice(0, 70);
     const cls = r.kind === 'verdict' ? 'accent' : r.kind === 'breaker' ? 'fail' : 'neutral';
-    t += `<tr>
+    const sess = p.session_id ? `<span class="badge neutral">${esc(String(p.session_id).slice(-6))}·G${esc(p.gen ?? '?')}</span>` : '<span style="color:var(--muted-2)">—</span>';
+    t += `<tr data-seq="${r.seq}" data-hash="${esc(r.this_hash)}">
       <td class="num">${r.seq}</td>
+      <td class="num" style="color:var(--muted)">${fmtTime(r.timestamp)}</td>
       <td><span class="badge ${cls}">${esc(r.kind)}</span></td>
       <td>${esc(brief)}</td>
+      <td>${sess}</td>
       <td class="num" style="color:var(--muted-2)">${esc(r.prev_hash)}</td>
       <td class="num">${esc(r.this_hash)}</td>
     </tr>`;
@@ -765,6 +913,14 @@ async function loadLiveStatus() {
   $('#apiStatus').innerHTML = st.api_configured
     ? `<span class="dot dot-ok"></span>API 已配置 · ${esc(st.provider || '自定义')} · <code>${esc(st.model || '')}</code>`
     : `<span class="dot"></span>未配置 API —— 双击「配置API.bat」后可用真实模式；当前可先离线演示`;
+  const leds = {
+    ledApi: { cls: st.api_configured ? 'is-ok' : '', on: true },
+    ledLive: { cls: (st.current && st.current.status === 'running') ? 'is-ok' : '', on: true },
+  };
+  Object.entries(leds).forEach(([id, led]) => {
+    const el = document.getElementById(id);
+    if (el) el.className = 'led ' + led.cls;
+  });
   const sel = $('#replaySel');
   const sessions = st.sessions || [];
   sel.innerHTML = sessions.length
@@ -788,6 +944,7 @@ async function loadAll() {
   renderLiveStats(); renderCapChart();
   renderMethod(); renderTaxonomy(); renderFrontier(); renderAudit();
   await loadLiveStatus();
+  await loadPulse().catch(() => {});
 }
 
 // -- 事件绑定 -----------------------------------------------------------

@@ -461,6 +461,28 @@ def api_live_sessions() -> dict[str, Any]:
     return {"sessions": _live_manager().saved_sessions()}
 
 
+def api_pulse() -> dict[str, Any]:
+    """跨视图聚合：直播实录 → 成本账本 / 矩阵命中 / 被拦不变量分布。"""
+    from .live import aggregate_sessions
+
+    sessions = aggregate_sessions()
+    totals = {
+        "sessions": len(sessions),
+        "generations": sum(s["generations"] for s in sessions),
+        "blocked": sum(s["blocked"] for s in sessions),
+        "passed": sum(s["passed"] for s in sessions),
+        "gate_elapsed_s": round(sum(s["gate_elapsed_s"] for s in sessions), 3),
+        "by_invariant": {},
+        "blocked_cells": {},
+    }
+    for s in sessions:
+        for k, v in s["by_invariant"].items():
+            totals["by_invariant"][k] = totals["by_invariant"].get(k, 0) + v
+        for k, v in s["blocked_cells"].items():
+            totals["blocked_cells"][k] = totals["blocked_cells"].get(k, 0) + v
+    return {"sessions": sessions, "totals": totals}
+
+
 def api_live_session(session_id: str) -> dict[str, Any]:
     """取一场历史会话的全部事件（前端回放源）。"""
     from .live import LIVE_DIR
@@ -621,6 +643,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/live/sessions":
                 self._send_json(api_live_sessions())
+                return
+            if path == "/api/pulse":
+                self._send_json(api_pulse())
                 return
             if path.startswith("/api/live/session/"):
                 self._send_json(api_live_session(path.rsplit("/", 1)[-1]))

@@ -405,6 +405,43 @@ TASK_POOL: list[dict[str, Any]] = [
 
 TASK_BY_ID: dict[str, dict[str, Any]] = {t["id"]: t for t in TASK_POOL}
 
+
+def _load_benchmark_tasks() -> list[dict[str, Any]]:
+    """合并外部基准任务（data/sources/*.json，由 tools/import_benchmarks.py 生成）。
+
+    每题带 source 字段（如 "gsm8k"）——题池的"依据"分三级并在 docs/SOURCES.md
+    中溯源：直接抽样（gsm8k, MIT）/ 格式对齐（GAIA）/ 自建（拦截规则映射
+    OWASP·ATLAS·DGM）。文件缺失时静默跳过，题池保持自包含可运行。
+    """
+    merged: list[dict[str, Any]] = []
+    src_dir = REPO_ROOT / "data" / "sources"
+    if not src_dir.exists():
+        return merged
+    for f in sorted(src_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for t in data.get("tasks", []):
+            try:
+                gold = str(t["answer"])
+                merged.append({
+                    "id": str(t["id"]),
+                    "kind": f"基准·{t.get('kind', '数学')}",
+                    "prompt": f"{t['question']}\n（只输出最终数值答案）",
+                    "needs_tool": None,
+                    "base_ok": False,
+                    "source": t.get("source", f.stem),
+                    "check": _make_number_check(gold, f"基准答案 {gold}"),
+                })
+            except (KeyError, TypeError):
+                continue
+    return merged
+
+
+TASK_POOL.extend(_load_benchmark_tasks())
+TASK_BY_ID.update({t["id"]: t for t in TASK_POOL if t["id"] not in TASK_BY_ID})
+
 #: 需要未授权工具的"天花板族"任务（抽样时除天花板外全部排除）
 LOCKED_TOOLS = ("web_search", "kb_search", "shell_exec")
 
@@ -949,6 +986,7 @@ class EvolutionSession:
             self._tasks = [TASK_BY_ID[i] for i in self.scenario.demo_tasks]
 
         sid = f"live-{time.strftime('%Y%m%d-%H%M%S')}"
+        self._sid = sid
         self.emit(
             {
                 "type": "session_start",
@@ -1268,7 +1306,7 @@ class EvolutionSession:
                 "audit_hash": chain.head_hash(),
             }
             chain.append("verdict", {"mod_id": mod.mod_id, "action": "拒绝（锁定）",
-                                     "gen": mod.round_index})
+                                     "gen": mod.round_index, "session_id": self._sid})
             return verdict
 
         gate_result = pipeline.run(mod, state)
@@ -1287,7 +1325,8 @@ class EvolutionSession:
         }
         chain.append(
             "verdict",
-            {"mod_id": mod.mod_id, "action": verdict["action"], "gen": mod.round_index},
+            {"mod_id": mod.mod_id, "action": verdict["action"], "gen": mod.round_index,
+             "session_id": self._sid},
         )
         return verdict
 
