@@ -35,8 +35,10 @@ from .types import (
 __all__ = ["CircuitBreaker"]
 
 # 同一进程内，同一审计日志路径只允许存在一个 AuditChain 实例：
-# 按路径共享审计实例以复用缓存；AuditChain 本身也支持跨实例和跨进程追加。
-# 熔断锁定与回滚点属于 CircuitBreaker，调用者仍须给流水线注入同一个熔断器。
+# AuditChain.append 每次都会把内存中的全部记录重写回文件，
+# 若两个实例指向同一文件，后写入的一方会用自己加载时的旧快照覆盖另一方的新记录。
+# 因此这里按路径共享实例，保证「流水线内建的熔断器」与「外部显式传入的熔断器」
+# 写入的是同一条链。
 _SHARED_AUDIT: dict[str, AuditChain] = {}
 
 
@@ -56,8 +58,6 @@ class CircuitBreaker:
         self._last_passed_global: str = ""          # 全局最近一次通过审查的版本
         self._mod_paths: dict[str, str] = {}        # mod_id -> path_key
         self._vetoes: dict[str, str] = {}           # mod_id -> 外部否决理由
-        # 审计上下文：由会话注入（session_id/mode 等），合并进判定与熔断记录
-        self.audit_context: dict = {}
 
     # -- 审计链 ---------------------------------------------------------
     @property
@@ -388,7 +388,7 @@ class CircuitBreaker:
                 "detail": event.detail,
             }
         )
-        chain.append("breaker", {**self.audit_context, **payload})
+        chain.append("breaker", payload)
 
 
 def _result_label(result: CheckResult) -> str:

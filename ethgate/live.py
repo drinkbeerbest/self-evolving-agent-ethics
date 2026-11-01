@@ -17,7 +17,6 @@ import json
 import queue
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -33,12 +32,12 @@ class LiveSession:
     """一场进化直播。emit 负责落盘 + 扇出。"""
 
     def __init__(self, opts: SessionOptions, session_id: str | None = None):
-        self.session_id = session_id or f"live-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        self.session_id = session_id or f"live-{time.strftime('%Y%m%d-%H%M%S')}"
         self.opts = opts
         self.events: list[dict[str, Any]] = []
         self.subs: list[queue.Queue[dict[str, Any]]] = []
         self.lock = threading.Lock()
-        self.status = "pending"  # pending | running | stopping | done | stopped | error
+        self.status = "pending"  # pending | running | done | stopped | error
         self.started_at = time.time()
         self.thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -52,8 +51,7 @@ class LiveSession:
             return
         self.status = "running"
         self._session = EvolutionSession(
-            self.opts, self._emit, rng_seed=int(time.time()) % 100000,
-            session_id=self.session_id,
+            self.opts, self._emit, rng_seed=int(time.time()) % 100000
         )
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -62,24 +60,18 @@ class LiveSession:
         self._stop.set()
         if self._session is not None:
             self._session.stop_flag = True
-        with self.lock:
-            if self.status in ("pending", "running"):
-                self.status = "stopping"
 
     def _run(self) -> None:
         try:
             if self._session is None:
                 self._session = EvolutionSession(
-                    self.opts, self._emit, rng_seed=int(time.time()) % 100000,
-                    session_id=self.session_id,
+                    self.opts, self._emit, rng_seed=int(time.time()) % 100000
                 )
             summary = self._session.run()
             self.status = "stopped" if summary.get("stopped") else "done"
         except Exception as exc:  # pragma: no cover
             self._emit({"type": "error", "message": f"会话异常终止：{exc}"})
             self.status = "error"
-        finally:
-            self._close_subs()
 
     # -- 事件 -------------------------------------------------------------
     def _emit(self, event: dict[str, Any]) -> None:
@@ -99,6 +91,8 @@ class LiveSession:
                 q.put_nowait(event)
             except queue.Full:
                 pass
+        if event.get("type") in ("session_end",):
+            self._close_subs()
 
     def _close_subs(self) -> None:
         with self.lock:
@@ -114,7 +108,7 @@ class LiveSession:
         q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=2000)
         with self.lock:
             backlog = list(self.events)
-            if self.status in ("running", "pending", "stopping"):
+            if self.status in ("running", "pending"):
                 self.subs.append(q)
             else:
                 backlog.append({"type": "__end__"})
@@ -148,16 +142,8 @@ class SessionManager:
 
     def create(self, opts: SessionOptions) -> LiveSession:
         with self.lock:
-            # 换场：先停旧会话并等其线程退出（最多 5 秒），然后照常开新场。
-            # 不再把"正在停止"抛回给用户——页面刷新后用户无从知道后台状态，
-            # 换场应当是无感的。旧线程若卡在 API 调用里超时未退，也是
-            # daemon 线程，事件写入各自文件互不干扰，直接放弃等待。
-            old = self.current
-            if old is not None:
-                old.stop()
-                thread = old.thread
-                if thread is not None and thread.is_alive() and hasattr(thread, "join"):
-                    thread.join(timeout=5.0)
+            if self.current is not None and self.current.status == "running":
+                self.current.stop()
             session = LiveSession(opts)
             self.current = session
             self.history.insert(0, session.session_id)
@@ -194,75 +180,6 @@ class SessionManager:
             except Exception:
                 continue
         return out
-
-
-def aggregate_sessions(limit: int = 30) -> list[dict[str, Any]]:
-    """把历史直播会话聚合为跨视图可用的结构化数据。
-
-    供 /api/pulse 消费：成本账本的"直播实录"、矩阵命中覆盖、
-    被拦不变量分布都从这一份数据派生——直播产生的每一次真实判定
-    自动进入全局统计，四个视图不再各说各话。
-    """
-    out: list[dict[str, Any]] = []
-    if not LIVE_DIR.exists():
-        return out
-    for f in sorted(LIVE_DIR.glob("*.jsonl"), reverse=True)[:limit]:
-        events = _read_events(f)
-        if not events:
-            continue
-        start = next((e for e in events if e.get("type") == "session_start"), {})
-        summary = next((e for e in events if e.get("type") == "session_end"), {})
-        stats = summary.get("stats") or {}
-        scores = summary.get("score_series") or []
-        by_invariant: dict[str, int] = {}
-        cells: dict[str, int] = {}
-        cost = 0.0
-        elapsed = 0.0
-        for e in events:
-            if e.get("type") not in ("blocked", "applied"):
-                continue
-            v = e.get("verdict") or {}
-            abs_ = (v.get("detail") or {}).get("cost_absolute") or {}
-            cost += float(abs_.get("comp_cost") or 0)
-            elapsed += float(abs_.get("elapsed_s") or 0)
-            for r in v.get("results") or []:
-                if r.get("status") == "违反":
-                    by_invariant[r.get("invariant", "?")] = by_invariant.get(r.get("invariant", "?"), 0) + 1
-            cell = ((v.get("detail") or {}).get("path_key")
-                    or f"{(v.get('mod') or {}).get('layer', '')}×{(v.get('mod') or {}).get('autonomy', '')}")
-            if e.get("type") == "blocked":
-                cells[cell] = cells.get(cell, 0) + 1
-        violations = 0
-        for e in events:
-            if e.get("type") != "applied":
-                continue
-            d = (e.get("verdict") or {}).get("detail") or {}
-            oa = d.get("original_action")
-            if d.get("monitor_mode") and oa and oa != "放行":
-                violations += 1
-        out.append({
-            "session_id": f.stem,
-            "mode": start.get("mode", "?"),
-            "gate_mode": start.get("gate_mode", "enforce"),
-            "violations": violations,
-            "model": start.get("model", ""),
-            "scenario": (start.get("scenario") or {}).get("name", ""),
-            "scenario_key": (start.get("scenario") or {}).get("key", ""),
-            "generations": len(scores),
-            "score_series": scores,
-            "best": max(scores) if scores else 0,
-            "passed": stats.get("passed", 0),
-            "blocked": stats.get("blocked", 0),
-            "api_tokens": stats.get("api_tokens", 0),
-            "gate_cost": round(cost, 6),
-            "gate_elapsed_s": round(elapsed, 3),
-            "by_invariant": by_invariant,
-            "blocked_cells": cells,
-            "started_at": start.get("ts", 0),
-            "task_ids": start.get("task_ids", []),
-            "source_file": f.name,
-        })
-    return out
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:

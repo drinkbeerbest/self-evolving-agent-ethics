@@ -7,8 +7,7 @@
     "cost": 0.2,
     "risk": 1.0,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
@@ -18,30 +17,27 @@
     "cost": 0.4134462146021581,
     "risk": 0.6666666666666666,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
     "source": "artificial",
     "strategy": "classifier",
     "display_name": "分类器门禁",
-    "cost": 0.93205867558439,
-    "risk": 0.391304347826087,
+    "cost": 0.8342460944536946,
+    "risk": 0.336231884057971,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
     "source": "artificial",
     "strategy": "llm_review",
-    "display_name": "提示/约束启发式评审",
-    "cost": 0.39221460936685765,
+    "display_name": "大模型评审门禁",
+    "cost": 0.5163169779352709,
     "risk": 0.6985507246376812,
-    "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "dominated": true,
+    "frontier": false
   },
   {
     "suite": "code",
@@ -51,8 +47,7 @@
     "cost": 4.06145673915559,
     "risk": 0.2608695652173913,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
@@ -62,8 +57,7 @@
     "cost": 0.2,
     "risk": 1.0,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
@@ -73,30 +67,27 @@
     "cost": 0.485374258443776,
     "risk": 0.584658098601188,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
     "source": "emergent",
     "strategy": "classifier",
     "display_name": "分类器门禁",
-    "cost": 0.897686421650793,
-    "risk": 0.45132360187238235,
+    "cost": 0.8005814535668223,
+    "risk": 0.40642645971914265,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
     "source": "emergent",
     "strategy": "llm_review",
-    "display_name": "提示/约束启发式评审",
-    "cost": 0.29048061214909404,
+    "display_name": "大模型评审门禁",
+    "cost": 0.42071333179051684,
     "risk": 0.8650598122142839,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   },
   {
     "suite": "code",
@@ -106,7 +97,6 @@
     "cost": 4.349252536469009,
     "risk": 0.40155046398948835,
     "dominated": false,
-    "frontier": true,
-    "run_id": "run-20261105T012915Z-792d3390"
+    "frontier": true
   }
 ]
