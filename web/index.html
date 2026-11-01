@@ -6,7 +6,7 @@
 <title>伦理熔断控制台 · 自进化智能体的准入控制</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -18,8 +18,8 @@
         <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z"/>
       </svg>
       <div class="brand-text">
-        <strong>伦理熔断控制台</strong>
-        <span>自进化智能体 · 面向自我修改的准入控制与对齐成本测量</span>
+        <strong>ETHGATE</strong>
+        <span>伦理熔断控制台 · 自进化智能体的准入控制与对齐成本测量</span>
       </div>
     </div>
     <nav class="tabs" id="tabs">
@@ -28,6 +28,11 @@
       <button class="tab" data-view="audit">审计链</button>
       <button class="tab" data-view="more">附录 · 方法与矩阵</button>
     </nav>
+    <div class="sys-leds" id="sysLeds">
+      <span class="led" id="ledChain"><i></i>AUDIT</span>
+      <span class="led" id="ledApi"><i></i>API</span>
+      <span class="led" id="ledLive"><i></i>LIVE</span>
+    </div>
   </div>
 </header>
 
@@ -149,6 +154,16 @@
 
     <div class="card">
       <div class="chart-head">
+        <h3>直播实录 · 真实会话按剧本聚合</h3>
+        <span class="tag" id="pulseTag"></span>
+      </div>
+      <p class="card-note">每一次直播判定都自动进入本账本：拦截/放行、被拦不变量分布与审查开销由 /api/pulse 实时聚合，与下方批量实验同屏对照。</p>
+      <div id="pulseInv" style="margin:6px 0 16px;"></div>
+      <div class="table-wrap"><table id="pulseTable" class="pulse-sessions"></table></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="chart-head">
         <h3>五种门禁策略的对比</h3>
         <span class="tag" id="frontierTag"></span>
       </div>
@@ -177,11 +192,16 @@
     <div class="view-head">
       <div>
         <h1>哈希链式审计记录</h1>
-        <p class="lede">每条记录含 prev_hash 与 this_hash。任何一条被篡改，后续所有记录的校验都会失败——这是 I2 审计完备性的物理基础，也是"拒绝理由可申诉"的证据所在。</p>
+        <p class="lede">每条记录含时间戳、prev_hash 与 this_hash。任何一条被篡改，后续所有记录的校验都会失败——这是 I2 审计完备性的物理基础，也是"拒绝理由可申诉"的证据所在。</p>
       </div>
       <span class="tag" id="auditTag"></span>
     </div>
     <div class="card">
+      <h3>链式结构 · 最近记录</h3>
+      <p class="card-note">每个节点通过 prev_hash 挂接前驱；红色节点为熔断事件，绿色为判定，黄色为人工裁决。</p>
+      <div class="chain-viz" id="chainViz"></div>
+    </div>
+    <div class="card" style="margin-top:16px;">
       <div class="table-wrap"><table id="auditTable"></table></div>
     </div>
   </section>
