@@ -32,6 +32,20 @@
   --fail-soft: rgba(255, 84, 104, 0.12);
   --warn: #ffb224;
   --warn-soft: rgba(255, 178, 36, 0.12);
+  /* 图表调色板（SVG 内无法用 CSS var 之外的运行时取色，故集中定义） */
+  --chart-bg: #0e1014;
+  --chart-grid: #1c212b;
+  --chart-axis: #2e3644;
+  --chart-text: #565e6c;
+  --chart-label: #b8bec9;
+  --chart-line: #c8f04b;
+  --chart-area: rgba(200, 240, 75, 0.07);
+  --chart-point-stroke: #0e1014;
+  --chart-dim: #565e6c;
+  --accent-contrast: #10120a;
+  --halo: rgba(200, 240, 75, 0.05);
+  --grid-ink: rgba(255, 255, 255, 0.016);
+  --topbar-bg: rgba(8, 9, 12, 0.82);
   /* 阴影与圆角 */
   --radius: 12px;
   --radius-sm: 8px;
@@ -52,11 +66,12 @@ body {
   font-size: 14px;
   line-height: 1.65;
   background:
-    radial-gradient(1200px 500px at 70% -10%, rgba(200, 240, 75, 0.05), transparent 60%),
-    linear-gradient(rgba(255, 255, 255, 0.016) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.016) 1px, transparent 1px),
+    radial-gradient(1200px 500px at 70% -10%, var(--halo), transparent 60%),
+    linear-gradient(var(--grid-ink) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-ink) 1px, transparent 1px),
     var(--bg0);
   background-size: auto, 28px 28px, 28px 28px, auto;
+  transition: background-color 0.25s ease, color 0.25s ease;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -76,7 +91,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 
 .topbar {
   position: sticky; top: 0; z-index: 60;
-  background: rgba(8, 9, 12, 0.82);
+  background: var(--topbar-bg);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
@@ -186,14 +201,80 @@ code { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px
 }
 .btn:hover { border-color: var(--muted-2); color: var(--ink); transform: translateY(-1px); }
 .btn-primary {
-  background: var(--accent); border-color: var(--accent); color: #10120a;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-contrast);
   font-weight: 700; letter-spacing: 0.04em;
 }
 .btn-primary:hover {
-  box-shadow: 0 4px 24px -4px rgba(200, 240, 75, 0.45);
-  color: #10120a;
+  box-shadow: 0 4px 24px -4px var(--accent-line);
+  color: var(--accent-contrast);
 }
 .btn-sm { padding: 6px 13px; font-size: 12px; }
+/* ============================================================
+   浅色主题：纸面工程图（ daylight drafting table ）
+   ============================================================ */
+
+html[data-theme="light"] {
+  --bg0: #f2f3f6;
+  --bg1: #ffffff;
+  --bg2: #eef0f4;
+  --bg3: #e3e7ee;
+  --line: #d9dee7;
+  --line2: #c2cad6;
+  --line-soft: #e8ebf1;
+  --ink: #171a20;
+  --ink-2: #3c424c;
+  --muted: #666e7b;
+  --muted-2: #939bab;
+  /* 浅色下电压绿加深为橄榄色，保证文字对比度 */
+  --accent: #5c7a08;
+  --accent-dim: rgba(92, 122, 8, 0.10);
+  --accent-line: rgba(92, 122, 8, 0.38);
+  --accent-glow: rgba(92, 122, 8, 0.08);
+  --pass: #0c8a4e;
+  --pass-soft: rgba(12, 138, 78, 0.10);
+  --fail: #cf2436;
+  --fail-soft: rgba(207, 36, 54, 0.08);
+  --warn: #a86c00;
+  --warn-soft: rgba(168, 108, 0, 0.12);
+  --chart-bg: #ffffff;
+  --chart-grid: #e7eaf0;
+  --chart-axis: #c9d0da;
+  --chart-text: #939bab;
+  --chart-label: #3c424c;
+  --chart-line: #7da30e;
+  --chart-area: rgba(125, 163, 14, 0.10);
+  --chart-point-stroke: #ffffff;
+  --chart-dim: #939bab;
+  --accent-contrast: #ffffff;
+  --halo: rgba(92, 122, 8, 0.07);
+  --grid-ink: rgba(23, 26, 32, 0.035);
+  --topbar-bg: rgba(255, 255, 255, 0.86);
+  --shadow: 0 1px 2px rgba(23, 26, 32, 0.05), 0 10px 28px -14px rgba(23, 26, 32, 0.18);
+  --shadow-lg: 0 24px 60px -24px rgba(23, 26, 32, 0.30);
+}
+
+html[data-theme="light"] body {
+  background:
+    radial-gradient(1200px 500px at 70% -10%, var(--halo), transparent 60%),
+    linear-gradient(var(--grid-ink) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-ink) 1px, transparent 1px),
+    var(--bg0);
+  background-size: auto, 28px 28px, 28px 28px, auto;
+}
+html[data-theme="light"] .brand-mark { filter: none; }
+html[data-theme="light"] .tab::after { box-shadow: none; }
+html[data-theme="light"] .gate-step::after { text-shadow: none; }
+html[data-theme="light"] .polyline-glow { filter: none; }
+
+/* 主题切换按钮 */
+.theme-toggle {
+  appearance: none; border: 1px solid var(--line2); background: var(--bg2);
+  color: var(--ink-2); width: 34px; height: 34px; border-radius: 9px;
+  cursor: pointer; font-size: 15px; line-height: 1; flex: none;
+  transition: all 0.16s ease; display: inline-flex; align-items: center; justify-content: center;
+}
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent-line); transform: translateY(-1px); }
+
 .is-hidden { display: none !important; }
 
 /* ============================================================
