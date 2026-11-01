@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark light" />
+<script>(function(){var t=null;try{t=localStorage.getItem('ethgate-theme')}catch(e){}if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);})();</script>
 <title>伦理熔断控制台 · 自进化智能体的准入控制</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,10 +30,11 @@
       <button class="tab" data-view="audit">审计链</button>
       <button class="tab" data-view="more">附录 · 方法与矩阵</button>
     </nav>
-    <div class="sys-leds" id="sysLeds">
+    <div class="sys-leds">
       <span class="led" id="ledChain"><i></i>AUDIT</span>
       <span class="led" id="ledApi"><i></i>API</span>
       <span class="led" id="ledLive"><i></i>LIVE</span>
+      <button class="theme-toggle" id="themeToggle" title="切换深浅主题">☾</button>
     </div>
   </div>
 </header>

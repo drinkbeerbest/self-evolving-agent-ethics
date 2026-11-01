@@ -39,6 +39,17 @@ function toast(msg) {
   toast._t = setTimeout(() => t.classList.remove('is-show'), 2600);
 }
 
+/** 当前主题的图表调色板（SVG 属性里不能用 var()，故运行时读取 CSS 变量）。 */
+function palette() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n) => cs.getPropertyValue(n).trim();
+  return {
+    bg: v('--chart-bg'), grid: v('--chart-grid'), axis: v('--chart-axis'),
+    text: v('--chart-text'), label: v('--chart-label'), line: v('--chart-line'),
+    area: v('--chart-area'), stroke: v('--chart-point-stroke'), dim: v('--chart-dim'),
+  };
+}
+
 const fmtTime = (ts) => {
   if (!ts) return '—';
   const d = new Date(Number(ts) * 1000);
@@ -132,21 +143,22 @@ function renderCapChart() {
   const n = Math.max(L.scores.length, 2);
   const x = (i) => PAD.l + (iw * i) / (n - 1);
   const y = (v) => PAD.t + ih - (ih * v) / 100;
+  const P = palette();
   let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;max-width:${W}px;display:block" xmlns="http://www.w3.org/2000/svg" role="img">
-    <rect width="${W}" height="${H}" fill="#0e1014" rx="10"/>`;
+    <rect width="${W}" height="${H}" fill="${P.bg}" rx="10"/>`;
   [0, 25, 50, 75, 100].forEach((v) => {
-    svg += `<line x1="${PAD.l}" y1="${y(v)}" x2="${W - PAD.r}" y2="${y(v)}" stroke="#1c212b"/>
-      <text x="${PAD.l - 8}" y="${y(v) + 4}" font-size="10.5" fill="#565e6c" text-anchor="end" font-family="JetBrains Mono,monospace">${v}</text>`;
+    svg += `<line x1="${PAD.l}" y1="${y(v)}" x2="${W - PAD.r}" y2="${y(v)}" stroke="${P.grid}"/>
+      <text x="${PAD.l - 8}" y="${y(v) + 4}" font-size="10.5" fill="${P.text}" text-anchor="end" font-family="JetBrains Mono,monospace">${v}</text>`;
   });
-  svg += `<line x1="${PAD.l}" y1="${y(0)}" x2="${W - PAD.r}" y2="${y(0)}" stroke="#2e3644"/>`;
+  svg += `<line x1="${PAD.l}" y1="${y(0)}" x2="${W - PAD.r}" y2="${y(0)}" stroke="${P.axis}"/>`;
   // 面积
   const pts = L.scores.map((s, i) => `${x(i)},${y(s)}`);
-  svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="rgba(200,240,75,0.07)"/>`;
-  svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="#c8f04b" stroke-width="2" stroke-linejoin="round" style="filter:drop-shadow(0 0 6px rgba(200,240,75,0.35))"/>`;
+  svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="${P.area}"/>`;
+  svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${P.line}" stroke-width="2" stroke-linejoin="round"/>`;
   L.scores.forEach((s, i) => {
-    svg += `<circle cx="${x(i)}" cy="${y(s)}" r="4" fill="#c8f04b" stroke="#0e1014" stroke-width="1.5"/>
-      <text x="${x(i)}" y="${y(s) - 9}" font-size="10.5" fill="#b8bec9" text-anchor="middle" font-family="JetBrains Mono,monospace">${s}</text>
-      <text x="${x(i)}" y="${H - 12}" font-size="10" fill="#565e6c" text-anchor="middle" font-family="JetBrains Mono,monospace">G${i + 1}</text>`;
+    svg += `<circle cx="${x(i)}" cy="${y(s)}" r="4" fill="${P.line}" stroke="${P.stroke}" stroke-width="1.5"/>
+      <text x="${x(i)}" y="${y(s) - 9}" font-size="10.5" fill="${P.label}" text-anchor="middle" font-family="JetBrains Mono,monospace">${s}</text>
+      <text x="${x(i)}" y="${H - 12}" font-size="10" fill="${P.text}" text-anchor="middle" font-family="JetBrains Mono,monospace">G${i + 1}</text>`;
   });
   svg += '</svg>';
   box.innerHTML = svg;
@@ -760,36 +772,37 @@ function renderFrontier() {
   const ticks = (min, max, n = 5) => Array.from({ length: n + 1 },
     (_, i) => min + ((max - min) * i) / n);
 
+  const P = palette();
   let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
     style="width:100%;height:auto;max-width:${W}px;display:block"
     xmlns="http://www.w3.org/2000/svg" role="img">
-    <rect x="0" y="0" width="${W}" height="${H}" fill="#0e1014" rx="10"/>`;
+    <rect x="0" y="0" width="${W}" height="${H}" fill="${P.bg}" rx="10"/>`;
   ticks(rMin, rMax).forEach((v) => {
-    svg += `<line x1="${PAD.l}" y1="${cy(v)}" x2="${W - PAD.r}" y2="${cy(v)}" stroke="#1c212b"/>
-      <text x="${PAD.l - 9}" y="${cy(v) + 4}" font-size="10.5" fill="#565e6c" text-anchor="end" font-family="JetBrains Mono,monospace">${pct(v)}</text>`;
+    svg += `<line x1="${PAD.l}" y1="${cy(v)}" x2="${W - PAD.r}" y2="${cy(v)}" stroke="${P.grid}"/>
+      <text x="${PAD.l - 9}" y="${cy(v) + 4}" font-size="10.5" fill="${P.text}" text-anchor="end" font-family="JetBrains Mono,monospace">${pct(v)}</text>`;
   });
   ticks(cMin, cMax).forEach((v) => {
-    svg += `<line x1="${cx(v)}" y1="${PAD.t}" x2="${cx(v)}" y2="${PAD.t + ih}" stroke="#1c212b"/>
-      <text x="${cx(v)}" y="${PAD.t + ih + 18}" font-size="10.5" fill="#565e6c" text-anchor="middle" font-family="JetBrains Mono,monospace">${fmt(v, 2)}</text>`;
+    svg += `<line x1="${cx(v)}" y1="${PAD.t}" x2="${cx(v)}" y2="${PAD.t + ih}" stroke="${P.grid}"/>
+      <text x="${cx(v)}" y="${PAD.t + ih + 18}" font-size="10.5" fill="${P.text}" text-anchor="middle" font-family="JetBrains Mono,monospace">${fmt(v, 2)}</text>`;
   });
-  svg += `<line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${W - PAD.r}" y2="${PAD.t + ih}" stroke="#2e3644"/>
-    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="#2e3644"/>
-    <text x="${PAD.l + iw / 2}" y="${H - 14}" font-size="11.5" fill="#828a99" text-anchor="middle">对齐总成本 C_ali（相对无门禁）</text>
-    <text x="16" y="${PAD.t + ih / 2}" font-size="11.5" fill="#828a99" text-anchor="middle" transform="rotate(-90 16 ${PAD.t + ih / 2})">残余风险（漏放率）</text>`;
+  svg += `<line x1="${PAD.l}" y1="${PAD.t + ih}" x2="${W - PAD.r}" y2="${PAD.t + ih}" stroke="${P.axis}"/>
+    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + ih}" stroke="${P.axis}"/>
+    <text x="${PAD.l + iw / 2}" y="${H - 14}" font-size="11.5" fill="${P.dim}" text-anchor="middle">对齐总成本 C_ali（相对无门禁）</text>
+    <text x="16" y="${PAD.t + ih / 2}" font-size="11.5" fill="${P.dim}" text-anchor="middle" transform="rotate(-90 16 ${PAD.t + ih / 2})">残余风险（漏放率）</text>`;
 
   const front = pts.filter((p) => !p.dominated).sort((a, b) => a.cost - b.cost);
   if (front.length > 1) {
     const d = front.map((p, i) => `${i ? 'L' : 'M'}${cx(p.cost)},${cy(p.risk)}`).join(' ');
-    svg += `<path d="${d}" fill="none" stroke="#c8f04b" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.8"/>`;
+    svg += `<path d="${d}" fill="none" stroke="${P.line}" stroke-width="1.6" stroke-dasharray="5 4" opacity="0.8"/>`;
   }
   pts.forEach((p) => {
     const x = cx(p.cost), y = cy(p.risk);
-    const col = p.dominated ? '#565e6c' : '#c8f04b';
+    const col = p.dominated ? P.dim : P.line;
     if (p.dominated) {
-      svg += `<circle cx="${x}" cy="${y}" r="7" fill="none" stroke="#565e6c" stroke-width="1.2" stroke-dasharray="3 2"/>`;
+      svg += `<circle cx="${x}" cy="${y}" r="7" fill="none" stroke="${P.dim}" stroke-width="1.2" stroke-dasharray="3 2"/>`;
     }
-    svg += `<circle cx="${x}" cy="${y}" r="4.6" fill="${col}" stroke="#0e1014" stroke-width="1.6"/>
-      <text x="${x + (x > W * 0.72 ? -9 : 9)}" y="${y - 7}" font-size="11" fill="${p.dominated ? '#565e6c' : '#b8bec9'}" text-anchor="${x > W * 0.72 ? 'end' : 'start'}">${esc(p.display_name)}</text>`;
+    svg += `<circle cx="${x}" cy="${y}" r="4.6" fill="${col}" stroke="${P.stroke}" stroke-width="1.6"/>
+      <text x="${x + (x > W * 0.72 ? -9 : 9)}" y="${y - 7}" font-size="11" fill="${p.dominated ? P.dim : P.label}" text-anchor="${x > W * 0.72 ? 'end' : 'start'}">${esc(p.display_name)}</text>`;
   });
   svg += '</svg>';
   $('#paretoWrap').innerHTML = svg;
@@ -955,6 +968,22 @@ $('#btnReplay').addEventListener('click', () => replaySession($('#replaySel').va
 $('#modalClose').addEventListener('click', closeModal);
 $('#modalMask').addEventListener('click', (e) => { if (e.target === $('#modalMask')) closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+// -- 主题切换 -----------------------------------------------------------
+function applyThemeGlyph() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const btn = $('#themeToggle');
+  if (btn) btn.textContent = cur === 'light' ? '☾' : '☀';
+}
+$('#themeToggle').addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('ethgate-theme', next); } catch (_) {}
+  applyThemeGlyph();
+  // 图表颜色烘焙在 SVG 里，切换后重绘
+  renderCapChart(); renderFrontier(); renderAudit(); renderPulse();
+});
+applyThemeGlyph();
 
 $('#modeSeg').addEventListener('click', (e) => {
   const b = e.target.closest('.seg-btn');
