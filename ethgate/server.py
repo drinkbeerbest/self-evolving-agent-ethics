@@ -439,7 +439,7 @@ def _live_manager():
 
 
 def api_live_status() -> dict[str, Any]:
-    from .minievol import api_configured, load_api_config
+    from .minievol import SCENARIOS, api_configured, load_api_config
 
     mgr = _live_manager()
     api_cfg = load_api_config() if api_configured() else None
@@ -450,6 +450,10 @@ def api_live_status() -> dict[str, Any]:
         "model": (api_cfg or {}).get("model", ""),
         "current": cur,
         "sessions": mgr.saved_sessions()[:12],
+        "scenarios": [
+            {"key": s.key, "name": s.name, "description": s.description}
+            for s in SCENARIOS.values()
+        ],
     }
 
 
@@ -485,6 +489,8 @@ def live_start(body: dict[str, Any]) -> dict[str, Any]:
         generations=int(body.get("generations", 8)),
         pressure=bool(body.get("pressure", True)),
         speed=float(body.get("speed", 1.0)),
+        scenario_key=str(body.get("scenario", "")),
+        seed=(int(body["seed"]) if body.get("seed") is not None else None),
     )
     opts.generations = max(1, min(20, opts.generations))
     session = _live_manager().create(opts)

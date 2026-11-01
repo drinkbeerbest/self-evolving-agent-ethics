@@ -12,7 +12,7 @@ const S = {
 const L = {
   running: false, es: null, sessionId: null, mode: 'auto',
   scores: [], stats: { passed: 0, blocked: 0, api_tokens: 0 },
-  cost: 0, elapsed: 0, replayToken: 0, finished: false,
+  cost: 0, elapsed: 0, replayToken: 0, finished: false, taskCount: 0,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -72,7 +72,7 @@ function renderLiveStats() {
     { label: '已进化', value: `${L.scores.length} 代`, sub: L.sessionId && L.running ? '进行中' : (L.finished ? '本场结束' : '待机') },
     { label: '拦截', value: L.stats.blocked, sub: '危险修改被阻断', cls: L.stats.blocked ? 'is-fail' : '' },
     { label: '放行', value: L.stats.passed, sub: '合法修改已生效', cls: 'is-pass' },
-    { label: '能力分', value: best === null ? '—' : best, sub: first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : '基准评测 6 题' },
+    { label: '能力分', value: best === null ? '—' : best, sub: first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : `基准评测 ${L.taskCount || 6} 题` },
     { label: '审查开销', value: `$${fmt(L.cost, 4)}`, sub: `门禁墙钟 ${fmt(L.elapsed, 2)}s · 会话 API ${L.stats.api_tokens} tok` },
   ];
   $('#liveStats').innerHTML = tiles.map((t) => `
@@ -179,13 +179,20 @@ function handleEvent(evt) {
     case 'session_start':
       L.sessionId = evt.session_id;
       L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
-      L.cost = 0; L.elapsed = 0;
+      L.cost = 0; L.elapsed = 0; L.taskCount = evt.task_count || 6;
       L.running = true; L.finished = false;
       clearStream(); renderLiveStats(); renderCapChart(); renderVitals(evt.vitals);
       $('#liveTag').textContent = evt.mode === 'live'
         ? `LIVE · ${evt.provider || ''} ${evt.model || ''}`.trim() : 'LIVE · 离线演示';
       $('#liveTag').classList.add('is-live');
-      setStatus(`进化开始（${evt.mode === 'live' ? '真实 API' : '离线演示'}）…`);
+      {
+        const sc = evt.scenario || {};
+        const scName = sc.name ? ` · 剧本《${sc.name}》` : '';
+        setStatus(`进化开始（${evt.mode === 'live' ? '真实 API' : '离线演示'}${scName}）——${sc.description || ''}`);
+        $('#scenarioDesc').textContent = sc.name
+          ? `本场：《${sc.name}》· ${sc.description} · 天花板题型「${sc.ceiling_task}」· 种子 ${evt.seed}`
+          : '';
+      }
       $('#btnStart').classList.add('is-hidden');
       $('#btnStop').classList.remove('is-hidden');
       break;
@@ -247,6 +254,7 @@ async function startLive() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mode, generations: Number($('#ctlGens').value), pressure: $('#ctlPressure').checked,
+        scenario: $('#ctlScenario').value || '',
       }),
     });
     const sid = resp.session.session_id;
@@ -752,7 +760,7 @@ function switchView(name) {
 async function loadLiveStatus() {
   try {
     S.liveStatus = await api('/api/live/status');
-  } catch (_) { S.liveStatus = { api_configured: false, sessions: [] }; }
+  } catch (_) { S.liveStatus = { api_configured: false, sessions: [], scenarios: [] }; }
   const st = S.liveStatus;
   $('#apiStatus').innerHTML = st.api_configured
     ? `<span class="dot dot-ok"></span>API 已配置 · ${esc(st.provider || '自定义')} · <code>${esc(st.model || '')}</code>`
@@ -762,6 +770,11 @@ async function loadLiveStatus() {
   sel.innerHTML = sessions.length
     ? sessions.map((s) => `<option value="${esc(s.session_id)}">${esc(s.session_id)}（${s.mode} · ${s.n_events} 事件）</option>`).join('')
     : '<option value="">（暂无历史会话）</option>';
+  const scSel = $('#ctlScenario');
+  const scenarios = st.scenarios || [];
+  scSel.innerHTML = '<option value="">自动轮换（按种子）</option>' +
+    scenarios.map((s) => `<option value="${esc(s.key)}">${esc(s.name)}</option>`).join('');
+  if (L.scenarioKey) scSel.value = L.scenarioKey;
 }
 
 async function loadAll() {
@@ -795,6 +808,12 @@ $('#modeSeg').addEventListener('click', (e) => {
 });
 $('#ctlGens').addEventListener('input', () => {
   $('#ctlGensVal').textContent = `${$('#ctlGens').value} 代`;
+});
+$('#ctlScenario').addEventListener('change', () => {
+  L.scenarioKey = $('#ctlScenario').value;
+  const st = S.liveStatus || {};
+  const sc = (st.scenarios || []).find((s) => s.key === L.scenarioKey);
+  $('#scenarioDesc').textContent = sc ? `《${sc.name}》· ${sc.description}` : '';
 });
 $('#filtSuite').addEventListener('click', (e) => {
   const b = e.target.closest('.seg-btn');
