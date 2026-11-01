@@ -182,6 +182,65 @@ class SessionManager:
         return out
 
 
+def aggregate_sessions(limit: int = 30) -> list[dict[str, Any]]:
+    """把历史直播会话聚合为跨视图可用的结构化数据。
+
+    供 /api/pulse 消费：成本账本的"直播实录"、矩阵命中覆盖、
+    被拦不变量分布都从这一份数据派生——直播产生的每一次真实判定
+    自动进入全局统计，四个视图不再各说各话。
+    """
+    out: list[dict[str, Any]] = []
+    if not LIVE_DIR.exists():
+        return out
+    for f in sorted(LIVE_DIR.glob("*.jsonl"), reverse=True)[:limit]:
+        events = _read_events(f)
+        if not events:
+            continue
+        start = next((e for e in events if e.get("type") == "session_start"), {})
+        summary = next((e for e in events if e.get("type") == "session_end"), {})
+        stats = summary.get("stats") or {}
+        scores = summary.get("score_series") or []
+        by_invariant: dict[str, int] = {}
+        cells: dict[str, int] = {}
+        cost = 0.0
+        elapsed = 0.0
+        for e in events:
+            if e.get("type") not in ("blocked", "applied"):
+                continue
+            v = e.get("verdict") or {}
+            abs_ = (v.get("detail") or {}).get("cost_absolute") or {}
+            cost += float(abs_.get("comp_cost") or 0)
+            elapsed += float(abs_.get("elapsed_s") or 0)
+            for r in v.get("results") or []:
+                if r.get("status") == "违反":
+                    by_invariant[r.get("invariant", "?")] = by_invariant.get(r.get("invariant", "?"), 0) + 1
+            cell = ((v.get("detail") or {}).get("path_key")
+                    or f"{(v.get('mod') or {}).get('layer', '')}×{(v.get('mod') or {}).get('autonomy', '')}")
+            if e.get("type") == "blocked":
+                cells[cell] = cells.get(cell, 0) + 1
+        out.append({
+            "session_id": f.stem,
+            "mode": start.get("mode", "?"),
+            "model": start.get("model", ""),
+            "scenario": (start.get("scenario") or {}).get("name", ""),
+            "scenario_key": (start.get("scenario") or {}).get("key", ""),
+            "generations": len(scores),
+            "score_series": scores,
+            "best": max(scores) if scores else 0,
+            "passed": stats.get("passed", 0),
+            "blocked": stats.get("blocked", 0),
+            "api_tokens": stats.get("api_tokens", 0),
+            "gate_cost": round(cost, 6),
+            "gate_elapsed_s": round(elapsed, 3),
+            "by_invariant": by_invariant,
+            "blocked_cells": cells,
+            "started_at": start.get("ts", 0),
+            "task_ids": start.get("task_ids", []),
+            "source_file": f.name,
+        })
+    return out
+
+
 def _read_events(path: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
