@@ -5,7 +5,8 @@
 const S = {
   health: null, taxonomy: null, results: null, audit: null,
   liveStatus: null, pulse: null,
-  filter: { suite: 'all', source: 'all' },
+  filter: { suite: 'all', source: 'artificial' },
+  auditCheckedAt: null, auditError: null, auditRequestId: 0,
   activeVerdict: null,
 };
 
@@ -19,6 +20,7 @@ const L = {
   lastAppliedKind: null,
   prevVitals: null,                         // 上一代 vitals 快照（差分用）
   ceiling: null,                            // 授权闭包边界（%）
+  actualMode: null, isReplay: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -114,18 +116,27 @@ function setStatus(text, cls) {
   el.innerHTML = `<span class="pulse-dot"></span>${text}`;
 }
 
+function renderLiveEvidence(mode = L.actualMode || L.mode) {
+  const label = $('#proposalSource');
+  if (!label) return;
+  const source = mode === 'live' ? '真实 API · 模型提案'
+    : mode === 'offline' ? '离线演示 · 脚本提案' : '自动模式 · 待确认来源';
+  label.textContent = (L.isReplay ? '历史回放 · ' : '') + source;
+  label.className = 'badge ' + (mode === 'live' ? 'accent' : 'neutral');
+}
+
 function renderLiveStats() {
   const best = L.scores.length ? Math.max(...L.scores) : null;
   const first = L.scores.length ? L.scores[0] : null;
   const tiles = [
     { label: '已进化', value: `${L.scores.length} 代`, sub: L.sessionId && L.running ? '进行中' : (L.finished ? '本场结束' : '待机') },
-    { label: '拦截', value: L.stats.blocked, sub: '危险修改被阻断', cls: L.stats.blocked ? 'is-fail' : '' },
-    { label: '放行', value: L.stats.passed, sub: '合法修改已生效', cls: 'is-pass' },
-    { label: '能力分', value: best === null ? '—' : best,
+    { label: '拦截', value: L.stats.blocked, sub: '门禁判定拒绝或上报', cls: L.stats.blocked ? 'is-fail' : '' },
+    { label: '放行', value: L.stats.passed, sub: '门禁判定放行并生效', cls: 'is-pass' },
+    { label: '本场最佳分', value: best === null ? '—' : best,
       sub: L.ceiling !== null
-        ? (first !== null && best !== first ? `首代 ${first} → 现在 ${best} · 上限 ${L.ceiling}` : `基准 ${L.taskCount || 6} 题 · 上限 ${L.ceiling}`)
-        : (first !== null && best !== first ? `首代 ${first} → 现在 ${best}` : `基准评测 ${L.taskCount || 6} 题`) },
-    { label: '审查开销', value: `$${fmt(L.cost, 4)}`, sub: `门禁墙钟 ${fmt(L.elapsed, 2)}s · 会话 API ${L.stats.api_tokens} tok` },
+        ? (first !== null && best !== first ? `首代 ${first} → 最高 ${best} · 上限 ${L.ceiling}` : `基准 ${L.taskCount || 6} 题 · 上限 ${L.ceiling}`)
+        : (first !== null && best !== first ? `首代 ${first} → 最高 ${best}` : `基准评测 ${L.taskCount || 6} 题`) },
+    { label: '审查开销（估算）', value: `$${fmt(L.cost, 4)}`, sub: `门禁实测 ${fmt(L.elapsed, 2)}s · 会话 API ${L.stats.api_tokens} tok` },
   ];
   const row = $('#liveStats');
   const prev = row.dataset.rendered === '1';
@@ -141,7 +152,7 @@ function renderLiveStats() {
   row.dataset.rendered = '1';
 }
 
-/* ---------- 任务卡阵：✗→✓ 翻转即自进化的直接证据 ---------- */
+/* ---------- 任务卡阵：追踪修改后的答题变化，不将单次翻转解释为因果 ---------- */
 
 const KIND_SHORT = {
   "知识题": "知识", "推理题": "推理", "精确计算": "计算", "限时计算": "限时计算",
@@ -170,8 +181,8 @@ function renderTiles(flips, cause) {
   const causeEl = $('#tileCause');
   if (flips && flips.length) {
     const names = flips.map((id) => `「${KIND_SHORT[L.tiles.kinds[id]] || L.tiles.kinds[id] || id}」`).join('、');
-    causeEl.innerHTML = (cause ? `第 ${cause.gen} 代「${esc(cause.note)}」生效 → ` : '')
-      + `<strong>${names} 由 ✗ 翻转为 ✓</strong> —— 这就是"修改持久化、参与后续决策"。`;
+    causeEl.innerHTML = (cause ? `最近放行：第 ${cause.gen} 代「${esc(cause.note)}」。` : '')
+      + `<strong>${names} 本代由 ✗ 翻转为 ✓</strong>（单次变化不能排除答题波动）。`;
     causeEl.classList.add('is-hot');
   } else if (causeEl.classList.contains('is-hot')) {
     // 保留最近一次翻转说明，但降调
@@ -307,7 +318,7 @@ function addCard(evt) {
   const failed = results.filter((r) => r.status !== '通过').slice(0, 2);
   const why = failed.length
     ? failed.map((r) => `${r.invariant} ${r.status}`).join(' · ')
-    : '四级门禁全部通过';
+    : '已执行的检查均通过';
   const costAbs = (v.detail && v.detail.cost_absolute) || {};
   const card = document.createElement('div');
   card.className = `evo-card ${cls}`;
@@ -325,7 +336,7 @@ function addCard(evt) {
     <div class="evo-foot">
       <span class="badge neutral">${esc(mod.layer || '')}</span>
       <span class="evo-verdict">${esc(why)}</span>
-      ${costAbs.comp_cost ? `<span class="evo-cost">审查 $${fmt(costAbs.comp_cost, 4)}</span>` : ''}
+      ${costAbs.comp_cost ? `<span class="evo-cost">审查估算 $${fmt(costAbs.comp_cost, 4)}</span>` : ''}
     </div>`;
   card.addEventListener('click', () => openModal(v, evt));
   const hashEl = card.querySelector('.evo-hash');
@@ -351,6 +362,8 @@ function handleEvent(evt) {
   switch (evt.type) {
     case 'session_start':
       L.sessionId = evt.session_id;
+      L.actualMode = evt.mode;
+      renderLiveEvidence();
       L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
       L.cost = 0; L.elapsed = 0; L.taskCount = evt.task_count || 6;
       L.tiles = { ids: evt.task_ids || [], kinds: evt.task_kinds || {}, ok: {} };
@@ -361,9 +374,9 @@ function handleEvent(evt) {
       renderTiles(); renderLineage();
       $('#ceilingTag').textContent = L.ceiling !== null
         ? `授权闭包边界 ${L.ceiling}%` : '待机';
-      $('#liveTag').textContent = evt.mode === 'live'
-        ? `LIVE · ${evt.provider || ''} ${evt.model || ''}`.trim() : 'LIVE · 离线演示';
-      $('#liveTag').classList.add('is-live');
+      $('#liveTag').textContent = (L.isReplay ? '回放 · ' : 'LIVE · ') + (evt.mode === 'live'
+        ? `${evt.provider || ''} ${evt.model || ''}`.trim() : '离线脚本');
+      $('#liveTag').classList.toggle('is-live', !L.isReplay);
       {
         const sc = evt.scenario || {};
         const scName = sc.name ? ` · 剧本《${sc.name}》` : '';
@@ -382,7 +395,7 @@ function handleEvent(evt) {
       setStatus(`第 ${evt.gen} 代 · ${evt.task} ${evt.ok ? '✓' : '✗'} ${evt.brief || ''}`);
       break;
     case 'tasks': {
-      // 任务卡阵：同批题跨代追踪，检测 ✗→✓ 翻转（自进化的直接证据）
+      // 任务卡阵：同批题跨代追踪，检测 ✗→✓ 翻转。
       const res = {};
       (evt.results || []).forEach((r) => { res[r.id] = !!r.ok; });
       const flips = L.tiles.ids.filter((id) => L.tiles.ok[id] === false && res[id] === true);
@@ -457,6 +470,8 @@ async function startLive() {
       }),
     });
     const sid = resp.session.session_id;
+    ++L.replayToken;
+    L.isReplay = false;
     openStream(sid);
   } catch (e) {
     toast('启动失败：' + e.message);
@@ -490,6 +505,7 @@ async function replaySession(sid) {
   catch (e) { toast('读取会话失败：' + e.message); return; }
   const events = data.events || [];
   // 重置界面后按序回放
+  L.isReplay = true;
   L.sessionId = sid; L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
   L.cost = 0; L.elapsed = 0; L.running = false; L.finished = false;
   L.tiles = { ids: [], kinds: {}, ok: {} }; L.lineage = [];
@@ -553,10 +569,10 @@ function openModal(v, evt) {
   const abs = (v.detail && v.detail.cost_absolute) || null;
   const absLine = abs ? `
     <div class="abs-cost">
-      <span class="abs-k">本次判定的绝对开销</span>
-      <span class="abs-v">耗时 ${fmt(abs.elapsed_s, 4)} s</span>
-      <span class="abs-v">token ${fmt(abs.tokens, 0)}</span>
-      <span class="abs-v">算力 $${fmt(abs.comp_cost, 4)}</span>
+      <span class="abs-k">门禁开销口径</span>
+      <span class="abs-v">实测墙钟 ${fmt(abs.elapsed_s, 4)} s</span>
+      <span class="abs-v">门禁 token 估算 ${fmt(abs.tokens, 0)}</span>
+      <span class="abs-v">算力估算 $${fmt(abs.comp_cost, 4)}</span>
     </div>` : '';
   const escalate = v.action === '上报';
 
@@ -593,13 +609,13 @@ function openModal(v, evt) {
 
     <div class="card">
       <h3>门禁检验结果</h3>
-      <p class="card-note">I1~I4 为四条伦理不变量；S1~S4 为二级沙箱的桩用例（越权探测 / 强制中断 / 日志完整性 / 回归）。</p>
+      <p class="card-note"><span class="badge neutral">静态与模拟检查</span> I1~I4 检查提案的结构化字段；S1~S4、影子与灰度为规则模拟，未运行隔离环境或生产流量。</p>
       <div class="inv-cards">${invCards || '<p class="empty">无检查结果</p>'}</div>
     </div>
 
     <div class="card">
       <h3>本次对齐成本账</h3>
-      <p class="card-note">判定与成本同屏——看不到代价的守门人一定会偷偷把门关掉。</p>
+      <p class="card-note"><span class="badge warn">估算成本</span> 七维成本按当前配置计算，算力金额按预设单价估算；墙钟为本地实测，真实模型 API 账单另计。</p>
       <div class="ledger">${ledger}</div>
       ${absLine}
       <div style="margin-top:12px;font-size:13px;">
@@ -644,10 +660,10 @@ function closeModal() {
    ============================================================ */
 
 const GATE_STEPS = [
-  { i: 1, name: '一级 · 静态审查', desc: '检查权限单调性、停机独立性、约束蕴含形式化侧，并按 18 格风险表判断是否落在高危格。', time: '毫秒级', cost: '最低' },
-  { i: 2, name: '二级 · 沙箱演练', desc: '隔离环境运行回归测试、越权探测、日志完整性检查，以及针对可中断性的强制中断演练。', time: '分钟级', cost: '中等' },
-  { i: 3, name: '三级 · 影子模式', desc: '生产流量并行运行但不生效，用动作分布散度、工具调用序列编辑距离、拒答率变化度量偏移。', time: '小时到天级', cost: '较高' },
-  { i: 4, name: '四级 · 灰度放量', desc: '按比例逐步放开，每级设观察窗与回滚条件。任何一级观察到异常即回滚并记入路径历史。', time: '按比例', cost: '可控' },
+  { i: 1, name: '一级 · 静态审查', desc: '实际检查提案字段中的权限差集、停机依赖和约束改写，并按 18 格风险表识别高危格。', implementation: '静态检查', cost: '模型估算' },
+  { i: 2, name: '二级 · 沙箱演练', desc: '根据提案字段模拟越权、停机、日志与回归检查；当前不执行修改后的代码，也不启动隔离环境。', implementation: '规则模拟', cost: '模型估算' },
+  { i: 3, name: '三级 · 影子模式', desc: '用提案特征估计行为偏移并检查阈值；当前未接入生产流量，未运行真实影子实例。', implementation: '规则模拟', cost: '模型估算' },
+  { i: 4, name: '四级 · 灰度放量', desc: '根据风险特征模拟放量与回滚判定；当前未进行真实部署，也没有真实观察窗。', implementation: '规则模拟', cost: '模型估算' },
 ];
 const INVARIANTS = [
   { id: 'I1', name: '权限单调性', desc: '修改后可达资源集不得超出修改前授权闭包与预设增量的并集', method: '工具表与系统调用白名单的差集运算 · 完全可判定' },
@@ -663,7 +679,7 @@ function renderMethod() {
       <span class="gate-idx">LEVEL ${g.i}</span>
       <h4>${esc(g.name)}</h4>
       <p>${esc(g.desc)}</p>
-      <div class="gate-cost"><span>${esc(g.time)}</span><span>成本 ${esc(g.cost)}</span></div>
+      <div class="gate-cost"><span>${esc(g.implementation)}</span><span>成本 ${esc(g.cost)}</span></div>
     </div>`).join('');
   $('#invList').innerHTML = INVARIANTS.map((v) => `
     <li>
@@ -819,16 +835,16 @@ function renderPulse() {
   // 会话明细
   const rows = (pulse.sessions || []).slice(0, 12);
   box2.innerHTML = rows.length ? `
-    <thead><tr><th>会话</th><th>剧本</th><th>模式</th><th>代数</th><th>拦截</th><th>放行</th><th>末代分</th><th>审查开销</th><th>API tok</th></tr></thead><tbody>
+    <thead><tr><th>会话</th><th>剧本</th><th>模式</th><th>代数</th><th>拦截</th><th>放行</th><th>最佳分</th><th>实测门禁耗时</th><th>API tok</th></tr></thead><tbody>
     ${rows.map((s) => `
       <tr style="cursor:pointer" data-sid="${esc(s.session_id)}">
         <td>${esc(s.session_id)}</td>
         <td>${esc(s.scenario || '—')}</td>
-        <td class="dim">${esc(s.mode)}</td>
+        <td class="dim">${esc(s.mode === 'live' ? '真实 API' : s.mode === 'offline' ? '离线脚本' : s.mode || '未知')}</td>
         <td class="num">${s.generations}</td>
         <td class="num" style="color:var(--fail)">${s.blocked}</td>
         <td class="num" style="color:var(--pass)">${s.passed}</td>
-        <td class="num">${s.best || '—'}</td>
+        <td class="num">${s.best ?? '—'}</td>
         <td class="num">${fmt(s.gate_elapsed_s, 2)}s</td>
         <td class="num">${s.api_tokens}</td>
       </tr>`).join('')}
@@ -855,9 +871,10 @@ function renderHeatHits() {
 
 function filteredRows() {
   const all = (S.results && S.results.summary) || [];
+  const source = S.filter.source === 'emergent' ? 'emergent' : 'artificial';
   return all.filter((r) => {
     if (S.filter.suite !== 'all' && r.suite !== S.filter.suite) return false;
-    if (S.filter.source !== 'all' && r.source !== S.filter.source) return false;
+    if (r.source !== source) return false;
     return true;
   });
 }
@@ -865,19 +882,20 @@ function filteredRows() {
 function aggregateByStrategy(rows) {
   const by = {};
   rows.forEach((r) => {
-    const k = r.strategy;
-    (by[k] = by[k] || { name: k, display_name: r.display_name, cost: 0, risk: 0, acer: 0, score: 0, n: 0, k: 0 });
+    // 同一策略的不同来源永远保留为不同点；多任务集只在同一来源内等权平均。
+    const k = `${r.strategy}:${r.source}`;
+    (by[k] = by[k] || { name: r.strategy, source: r.source, display_name: r.display_name, cost: 0, risk: 0, score: 0, n: 0, k: 0 });
     const a = by[k];
     a.cost += Number(r.c_ali ?? 0);
     a.risk += Number(r.fnr ?? 0);
-    a.acer += Number(r.acer ?? 0);
     a.score += Number(r.score ?? 0);
     a.n += Number(r.n ?? 0);
     a.k += 1;
   });
   return Object.values(by).map((a) => ({
-    name: a.name, display_name: a.display_name,
-    cost: a.cost / a.k, risk: a.risk / a.k, acer: a.acer / a.k, score: a.score / a.k,
+    name: a.name, source: a.source, display_name: a.display_name,
+    cost: a.cost / a.k, risk: a.risk / a.k,
+    acer: a.cost > 0 ? (a.k - a.risk) / a.cost : null, score: a.score / a.k,
     n: a.n, groups: a.k,
   }));
 }
@@ -900,7 +918,7 @@ function renderFrontier() {
   });
   const scope = [
     S.filter.suite === 'all' ? '全部任务集' : S.filter.suite,
-    S.filter.source === 'all' ? '全部样本来源' : (S.filter.source === 'artificial' ? '人工构造' : '自然涌现'),
+    S.filter.source === 'emergent' ? '模拟涌现' : '人工构造',
   ].join(' · ');
   $('#frontierTag').textContent = `${pts.length} 种策略 · ${rows.length} 行 · ${scope}`;
 
@@ -958,7 +976,10 @@ function renderFrontier() {
   if (safest && bestValue && safest.name !== bestValue.name) {
     note += ` <strong>但"风险最低"不等于"性价比最高"</strong>：${esc(safest.display_name)} 的残余风险最低（${pct(safest.risk)}），而 ${esc(bestValue.display_name)} 的 ACER 更高（${fmt(bestValue.acer, 3)} vs ${fmt(safest.acer, 3)}）。`;
   }
-  $('#paretoNote').innerHTML = note;
+  const averaging = S.filter.suite === 'all'
+    ? '同一来源内各任务集等权平均；ACER = (1 − 平均 FNR) / 平均 C_ali。'
+    : 'ACER = (1 − FNR) / C_ali。';
+  $('#paretoNote').innerHTML = `模拟实验 · ${averaging} ${note}`;
 
   const byAcer = pts.slice().sort((a, b) => (b.acer ?? 0) - (a.acer ?? 0));
   const maxA = Math.max(...byAcer.map((r) => r.acer ?? 0), 0.0001);
@@ -979,13 +1000,13 @@ function renderFrontier() {
   let t = `<thead><tr><th>策略</th><th>任务集</th><th>来源</th>${cols.map(([, n]) => `<th>${n}</th>`).join('')}<th>C_ali</th><th>ACER</th><th>拦截率</th><th>误拦率</th><th>n</th></tr></thead><tbody>`;
   rows.forEach((r) => {
     t += `<tr><td class="name">${esc(r.display_name || r.strategy)}</td>
-      <td class="dim">${esc(r.suite)}</td><td class="dim">${esc(r.source === 'artificial' ? '人工' : '涌现')}</td>`;
+      <td class="dim">${esc(r.suite)}</td><td class="dim">${esc(r.source === 'artificial' ? '人工' : '模拟涌现')}</td>`;
     cols.forEach(([k]) => {
       const v = r[k] ?? 0;
       t += `<td class="num">${fmt(v, 3)}<div class="mini-track"><div class="mini-fill" style="width:${Math.max(0, Math.min(100, (v / maxes[k]) * 100))}%"></div></div></td>`;
     });
     t += `<td class="num"><strong>${fmt(r.c_ali, 3)}</strong></td>
-      <td class="num">${fmt(r.acer, 3)}</td>
+      <td class="num">${fmt(Number(r.c_ali) > 0 ? (1 - Number(r.fnr)) / Number(r.c_ali) : null, 3)}</td>
       <td class="num">${pct(r.intercept_rate)}</td>
       <td class="num">${pct(r.false_block_rate)}</td>
       <td class="num">${r.n ?? '—'}</td></tr>`;
@@ -1001,9 +1022,27 @@ function renderAudit() {
   const a = S.audit || {};
   const recs = a.records || [];
   const v = a.verify || {};
-  $('#auditTag').textContent = v.valid ? `链完整 · ${a.total} 条记录` : `链在 seq ${v.broken_at_seq} 处断裂`;
+  const verified = !S.auditError && typeof v.valid === 'boolean';
+  const state = !verified ? 'unknown' : v.valid ? 'valid' : 'invalid';
+  const tag = $('#auditTag');
+  tag.className = 'tag is-' + state;
+  tag.textContent = !verified ? '未验证'
+    : v.valid ? `有效 · ${a.total} 条记录` : `无效 · seq ${v.broken_at_seq ?? '未知'} 处断裂`;
+  const checkedAt = S.auditCheckedAt ? fmtTime(S.auditCheckedAt) : null;
+  const status = $('#auditStatus');
+  if (status) {
+    status.className = 'audit-status is-' + state;
+    status.textContent = !verified
+      ? (S.auditError ? `本次校验未完成：${S.auditError}。` : '尚未收到审计校验结果。')
+        + (checkedAt ? `上次校验响应：${checkedAt}（${v.valid ? '有效' : '无效'}）；下方保留上次取得的记录。` : '')
+      : `校验响应时间：${checkedAt || '未知'}。${v.valid ? '当前本地记录的哈希链校验通过。' : '当前本地记录的哈希链校验失败，请检查断裂位置。'}`;
+  }
   const led = $('#ledChain');
-  if (led) led.className = 'led ' + (v.valid ? 'is-ok' : 'is-fail');
+  if (led) {
+    led.className = 'led ' + (!verified ? 'is-unknown' : v.valid ? 'is-ok' : 'is-fail');
+    led.title = `审计链：${!verified ? '未验证' : v.valid ? '有效' : '无效'}`
+      + (checkedAt ? ` · 最近校验响应 ${checkedAt}` : '');
+  }
 
   // 链式可视化：最近 24 条节点
   const viz = $('#chainViz');
@@ -1045,7 +1084,20 @@ function renderAudit() {
 }
 
 async function refreshAudit() {
-  S.audit = await api('/api/audit').catch(() => ({ total: 0, records: [], verify: { valid: true } }));
+  const requestId = ++S.auditRequestId;
+  try {
+    const data = await api('/api/audit');
+    if (typeof data?.verify?.valid !== 'boolean' || !Array.isArray(data.records)) {
+      throw new Error('审计接口未返回有效的校验结果');
+    }
+    if (requestId !== S.auditRequestId) return;
+    S.audit = data;
+    S.auditCheckedAt = Date.now() / 1000;
+    S.auditError = null;
+  } catch (e) {
+    if (requestId !== S.auditRequestId) return;
+    S.auditError = e.message || '无法连接审计接口';
+  }
   renderAudit();
 }
 async function loadAuditOnly() { await refreshAudit(); }
@@ -1090,12 +1142,12 @@ async function loadLiveStatus() {
 
 async function loadAll() {
   try { S.health = await api('/api/health'); } catch (_) { S.health = null; }
-  const [tax, res, aud] = await Promise.all([
+  const [tax, res] = await Promise.all([
     api('/api/taxonomy').catch(() => null),
     api('/api/results').catch(() => ({ summary: [], frontier: [], raw_count: 0 })),
-    api('/api/audit').catch(() => ({ total: 0, records: [], verify: { valid: true } })),
+    refreshAudit(),
   ]);
-  S.taxonomy = tax; S.results = res; S.audit = aud;
+  S.taxonomy = tax; S.results = res;
   renderLiveStats(); renderCapChart();
   renderMethod(); renderTaxonomy(); renderFrontier(); renderAudit();
   await loadLiveStatus();
@@ -1133,6 +1185,7 @@ $('#modeSeg').addEventListener('click', (e) => {
   $$('#modeSeg .seg-btn').forEach((x) => x.classList.remove('is-active'));
   b.classList.add('is-active');
   L.mode = b.dataset.mode;
+  if (!L.sessionId) renderLiveEvidence(L.mode);
 });
 $('#ctlGens').addEventListener('input', () => {
   $('#ctlGensVal').textContent = `${$('#ctlGens').value} 代`;
@@ -1153,7 +1206,7 @@ $('#filtSuite').addEventListener('click', (e) => {
 });
 $('#filtSource').addEventListener('click', (e) => {
   const b = e.target.closest('.seg-btn');
-  if (!b) return;
+  if (!b || !['artificial', 'emergent'].includes(b.dataset.source)) return;
   $$('#filtSource .seg-btn').forEach((x) => x.classList.remove('is-active'));
   b.classList.add('is-active');
   S.filter.source = b.dataset.source;
