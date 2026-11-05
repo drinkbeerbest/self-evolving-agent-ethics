@@ -1,4 +1,6 @@
-"""哈希链式审计日志（支撑 I2 审计完备性：任一历史状态可重建）。
+"""哈希链式审计日志（支撑 I2 的事件留痕与完整性校验）。
+
+事件检索不等于任意历史状态重建；完整重建还需要可信快照及可应用的变更载荷。
 
 每条记录包含 prev_hash 与 this_hash，形成链。任何一条被篡改，
 后续所有记录的 this_hash 校验都会失败。
@@ -23,6 +25,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import os
 import threading
 import time
@@ -43,25 +46,30 @@ def _file_lock(path: Path) -> Iterator[None]:
     fh = None
     try:
         fh = open(lock_path, "a+b")
-        try:
-            import msvcrt  # type: ignore
+        if os.name == "nt":
+            import msvcrt
 
+            # a+b 默认定位到末尾；所有写入者必须锁住同一个字节。
+            fh.seek(0)
             msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-        except Exception:
-            try:
-                import fcntl  # type: ignore
+        else:
+            import fcntl
 
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            except Exception:
-                pass
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        # 获取锁失败必须中止写入，不能退化为无锁追加。
         yield
     finally:
         if fh is not None:
             try:
-                import msvcrt  # type: ignore
+                if os.name == "nt":
+                    import msvcrt
 
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             except Exception:
                 pass
             fh.close()
@@ -70,16 +78,13 @@ def _file_lock(path: Path) -> Iterator[None]:
 class AuditChain:
     """追加式的哈希链审计日志。"""
 
-    #: 链头读取的尾部窗口（字节）。链头只需要最后一条记录，
-    #: 全量重读在链增长到数万条后会让每次追加重读整个文件。
-    _TAIL_BYTES = 256 * 1024
-
     def __init__(self, log_path: str | Path):
         self.path = Path(log_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._records: list[AuditRecord] = []
         self._cache_key: tuple[int, int] | None = None  # (mtime_ns, size)
+        self._read_error: dict[str, Any] | None = None
         self._load()
 
     # -- 持久化 ---------------------------------------------------------
@@ -90,31 +95,69 @@ class AuditChain:
         try:
             st = self.path.stat()
             return (st.st_mtime_ns, st.st_size)
-        except OSError:
+        except FileNotFoundError:
             return None
 
-    def _read_all(self) -> list[AuditRecord]:
+    def _read_all(self, *, force: bool = False) -> list[AuditRecord]:
+        with self._lock:
+            try:
+                # 与写入共用文件锁，避免把尚未写完的一行误报为损坏。
+                with _file_lock(self.path):
+                    return self._read_disk(force=force)
+            except OSError as exc:
+                self._read_error = {"broken_at_seq": 0, "line": None,
+                                    "reason": f"审计文件无法锁定：{type(exc).__name__}"}
+                self._records = []
+                self._cache_key = None
+                return []
+
+    def _read_disk(self, *, force: bool = False) -> list[AuditRecord]:
         """全量读取（带 mtime+size 缓存：追加式文件内容相同时无需重解析）。"""
-        key = self._stat()
-        if key is None:
+        try:
+            key = self._stat()
+        except OSError as exc:
+            self._read_error = {"broken_at_seq": 0, "line": None,
+                                "reason": f"审计文件无法访问：{type(exc).__name__}"}
             self._records = []
             self._cache_key = None
             return []
-        if key == self._cache_key and self._records:
+        if key is None:
+            self._records = []
+            self._cache_key = None
+            self._read_error = None
+            return []
+        if not force and key == self._cache_key:
             return self._records
         out: list[AuditRecord] = []
+        self._read_error = None
         try:
             text = self.path.read_text(encoding="utf-8")
-        except Exception:
-            return self._records
-        for line in text.splitlines():
+        except (OSError, UnicodeError) as exc:
+            self._read_error = {"broken_at_seq": 0, "line": None,
+                                "reason": f"审计文件无法读取：{type(exc).__name__}"}
+            self._records = []
+            self._cache_key = None
+            return []
+        prev = GENESIS
+        for line_no, line in enumerate(text.splitlines(), 1):
             line = line.strip()
             if not line:
                 continue
             try:
-                out.append(AuditRecord(**json.loads(line)))
-            except Exception:
-                continue
+                rec = AuditRecord(**json.loads(line))
+                if type(rec.seq) is not int or rec.seq != len(out):
+                    raise ValueError("记录序号不连续")
+                expect = AuditRecord.compute_hash(
+                    rec.seq, rec.timestamp, rec.kind, rec.payload, prev
+                )
+                if rec.prev_hash != prev or rec.this_hash != expect:
+                    raise ValueError("记录哈希不匹配")
+            except (TypeError, ValueError, KeyError) as exc:
+                self._read_error = {"broken_at_seq": len(out), "line": line_no,
+                                    "reason": f"审计记录损坏：{type(exc).__name__}"}
+                break
+            out.append(rec)
+            prev = rec.this_hash
         self._records = out
         self._cache_key = key
         return out
@@ -122,34 +165,16 @@ class AuditChain:
     def _disk_head(self) -> tuple[int, str]:
         """从磁盘读出真实链头：(下一条 seq, 上一条 this_hash)。
 
-        只读文件尾部：append-only 文件的最后一条记录就是链头，
-        不必解析全文件（数万条记录时全量重读会让每次追加变成秒级）。
+        自身连续追加命中缓存；其他写入者改变文件后重新读取并校验，
+        防止内存漏记录或接在损坏记录后继续写入。
         """
-        if not self.path.exists():
+        # append 已持有进程内与文件锁，不能重复获取文件锁。
+        recs = self._read_disk()
+        if self._read_error:
+            raise ValueError("审计链损坏或不可读取，已停止追加")
+        if not recs:
             return 0, GENESIS
-        try:
-            with self.path.open("rb") as f:
-                f.seek(0, os.SEEK_END)
-                size = f.tell()
-                f.seek(max(0, size - self._TAIL_BYTES))
-                tail = f.read().decode("utf-8", "ignore")
-        except OSError:
-            recs = self._read_all()
-            if not recs:
-                return 0, GENESIS
-            return int(recs[-1].seq) + 1, str(recs[-1].this_hash)
-        lines = [ln for ln in tail.splitlines() if ln.strip()]
-        if not lines:
-            return 0, GENESIS
-        try:
-            last = json.loads(lines[-1])
-            return int(last["seq"]) + 1, str(last["this_hash"])
-        except Exception:
-            # 尾部窗口恰好截断在行中间等异常情况：退回全量读取
-            recs = self._read_all()
-            if not recs:
-                return 0, GENESIS
-            return int(recs[-1].seq) + 1, str(recs[-1].this_hash)
+        return int(recs[-1].seq) + 1, str(recs[-1].this_hash)
 
     def _flush(self) -> None:
         """兼容旧接口：重写整个文件（仅在明确需要时使用）。"""
@@ -162,17 +187,26 @@ class AuditChain:
         with self._lock, _file_lock(self.path):
             seq, prev = self._disk_head()
             ts = time.time()
-            this = AuditRecord.compute_hash(seq, ts, kind, payload, prev)
-            rec = AuditRecord(seq=seq, timestamp=ts, kind=kind, payload=payload,
+            # 缓存与落盘内容均使用独立的 JSON 快照，调用者后续修改不能污染缓存。
+            snapshot = json.loads(json.dumps(payload, ensure_ascii=False, default=_json_default))
+            this = AuditRecord.compute_hash(seq, ts, kind, snapshot, prev)
+            rec = AuditRecord(seq=seq, timestamp=ts, kind=kind, payload=snapshot,
                               prev_hash=prev, this_hash=this)
             line = json.dumps(rec.__dict__, ensure_ascii=False, default=_json_default)
+            # 外部导入的有效 JSONL 最后一行也可能没有换行。
+            separator = ""
+            if self.path.exists() and self.path.stat().st_size:
+                with self.path.open("rb") as existing:
+                    existing.seek(-1, os.SEEK_END)
+                    if existing.read(1) != b"\n":
+                        separator = "\n"
             with self.path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+                f.write(separator + line + "\n")
                 f.flush()
                 os.fsync(f.fileno())
             self._records.append(rec)
             self._cache_key = self._stat()
-            return rec
+            return deepcopy(rec)
 
     # -- 查询 -----------------------------------------------------------
     def __len__(self) -> int:
@@ -181,12 +215,21 @@ class AuditChain:
     def records(self, kind: str | None = None) -> list[AuditRecord]:
         recs = self._read_all()
         if kind is None:
-            return recs
-        return [r for r in recs if r.kind == kind]
+            return deepcopy(recs)
+        return deepcopy([r for r in recs if r.kind == kind])
 
     def verify(self) -> dict[str, Any]:
         """校验链完整性（以磁盘内容为准）。"""
-        recs = self._read_all()
+        with self._lock:
+            return self._verify()
+
+    def _verify(self) -> dict[str, Any]:
+        # 校验不能仅依赖 mtime/size 缓存：同长度篡改也必须被发现。
+        recs = self._read_all(force=True)
+        checked_at = time.time()
+        if self._read_error:
+            return {"valid": False, "total": len(recs), "checked_at": checked_at,
+                    **self._read_error}
         prev = GENESIS
         for i, r in enumerate(recs):
             expect = AuditRecord.compute_hash(
@@ -196,20 +239,21 @@ class AuditChain:
                 return {
                     "valid": False,
                     "broken_at_seq": i,
-                    "total": len(recs),
+                    "total": len(recs), "checked_at": checked_at,
                 }
             prev = r.this_hash
-        return {"valid": True, "broken_at_seq": None, "total": len(recs)}
+        return {"valid": True, "broken_at_seq": None, "total": len(recs),
+                "checked_at": checked_at}
 
     def reconstruct(self, seq: int) -> dict[str, Any] | None:
-        """按 seq 重建一条记录（I2 的可重建性演示）。"""
+        """按 seq 检索一条审计事件；不声称还原完整系统状态。"""
         for r in self._read_all():
             if r.seq == seq:
                 return {
                     "seq": r.seq,
                     "timestamp": r.timestamp,
                     "kind": r.kind,
-                    "payload": r.payload,
+                    "payload": deepcopy(r.payload),
                     "prev_hash": r.prev_hash,
                     "this_hash": r.this_hash,
                 }

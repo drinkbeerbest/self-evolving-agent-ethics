@@ -1,0 +1,6 @@
+# Core runtime and experiments; tested with Python 3.14.
+PyYAML>=6.0.3,<7
+numpy>=2.3,<3
+# Optional data analysis and plotting dependencies:
+pandas>=2.3,<4
+matplotlib>=3.10,<4

@@ -1,190 +1,181 @@
-"""导出真实拦截语料 + 标注一致性工作表（回应"数据集应用太少、拦截无依据"）。
+"""导出会话语料与独立盲标工作表，不重复补数、不展示机器判定。
 
-产物
-----
-data/corpus/proposals.jsonl   全部去重提案（含扫描器命中与判定结果）
-data/corpus/labeling_sheet.csv  人工标注工作表（三位组员独立填写 rater_1/2/3 列）
-data/corpus/stats.json        语料统计
-
-标注协议（三人独立，互不通气）
-    每行根据 diff 与理由判断"这次自我修改是否危险"，dangerous / safe 二选一。
-    填完后运行 python tools/labeling_kappa.py 计算 Fleiss' κ 与
-    扫描器规则对人工多数意见的 precision / recall——
-    这就是把"我们自己定义危险"变成"规则经三人独立标注验证"。
+每位标注者只领取 rater_N.csv，填写 label=dangerous/safe。
+labeling_sheet.csv 为合并模板；机器标签只存在 proposals.jsonl，完成后通过稳定 ID 关联。
 """
 from __future__ import annotations
-
 import csv
+import hashlib
 import json
 import sys
-import time
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-
-from ethgate.scanner import scan  # noqa: E402
-from ethgate.types import Modification  # noqa: E402
+from ethgate.datasets import _mod_from_dict
+from ethgate.scanner import scan
 
 LIVE_DIR = ROOT / "data" / "live"
-AUDIT = ROOT / "data" / "audit" / "audit_chain.jsonl"
 OUT_DIR = ROOT / "data" / "corpus"
-SHEET_ROWS = 100
-
-
-def load_modification(d: dict) -> Modification:
-    from ethgate.server import modification_from_dict
-
-    return modification_from_dict(d)
+RATERS = ("rater_1", "rater_2", "rater_3")
+EVIDENCE_FIELDS = ("id", "layer", "title", "rationale", "context", "changes_and_diff")
 
 
 def _structured_changes(mod: dict) -> str:
-    """把权限面/约束面/提示面的结构化变更转成标注者可读的摘要。"""
+    """只呈现修改事实，不展示扫描器/门禁结论。"""
     parts = []
-    if mod.get("new_tools"):
-        parts.append("新增工具: " + "、".join(mod["new_tools"]))
-    if mod.get("new_syscalls"):
-        parts.append("新增系统调用: " + "、".join(mod["new_syscalls"]))
-    if mod.get("new_network_hosts"):
-        parts.append("新增网络出口: " + "、".join(mod["new_network_hosts"]))
-    if mod.get("removed_constraints"):
-        parts.append("删除约束: " + "；".join(mod["removed_constraints"]))
+    for key, label in (("new_tools", "新增工具"), ("new_syscalls", "新增系统调用"),
+                       ("new_network_hosts", "新增网络出口"), ("removed_constraints", "删除约束"),
+                       ("added_constraints", "新增约束"), ("added_prompts", "新增提示"),
+                       ("removed_prompts", "删除提示")):
+        if mod.get(key):
+            parts.append(label + ": " + "；".join(map(str, mod[key])))
     if mod.get("constraint_rewrites"):
         parts.append("改写约束: " + "；".join(f"{a} → {b}" for a, b in mod["constraint_rewrites"]))
-    if mod.get("added_prompts"):
-        parts.append("新增提示: " + "；".join(mod["added_prompts"]))
-    if mod.get("removed_prompts"):
-        parts.append("删除提示: " + "；".join(mod["removed_prompts"]))
-    if mod.get("hardcode_detected"):
-        parts.append("检出硬编码/用例特判")
-    if mod.get("log_level_delta", 0) < 0:
-        parts.append("日志级别下调")
+    if mod.get("log_level_delta"):
+        parts.append(f"日志级别变化: {mod['log_level_delta']}")
     return "；".join(parts)
 
 
 def _diff_from_files(mod: dict) -> str:
-    """从序列化的 Modification.files 重建 diff 文本。"""
     parts = []
-    for f in mod.get("files") or []:
-        parts.append(f"--- {f.get('path', '')}")
-        for l in f.get("removed") or []:
-            parts.append(f"- {l}")
-        for l in f.get("added") or []:
-            parts.append(f"+ {l}")
+    for item in mod.get("files") or []:
+        parts.append(f"--- {item.get('path', '')}")
+        parts.extend("- " + str(line) for line in item.get("removed") or [])
+        parts.extend("+ " + str(line) for line in item.get("added") or [])
     return "\n".join(parts)
 
 
-def collect() -> list[dict]:
-    """从直播会话事件流收集全部去重提案。"""
-    out: dict[str, dict] = {}
-    if LIVE_DIR.exists():
-        for f in sorted(LIVE_DIR.glob("*.jsonl")):
-            session = f.stem
-            for line in f.read_text(encoding="utf-8").splitlines():
-                try:
-                    e = json.loads(line)
-                except Exception:
-                    continue
-                mod = e.get("mod")
-                if not mod:
-                    continue
-                mid = mod.get("mod_id") or ""
-                if not mid or mid in out:
-                    continue
-                out[mid] = {
-                    "mod_id": mid,
-                    "session": session,
-                    "gen": e.get("gen"),
-                    "origin": "live-" + e.get("raw", {}).get("kind", "?"),
-                    "title": mod.get("title", ""),
-                    "rationale": mod.get("rationale", ""),
-                    "layer": mod.get("layer", ""),
-                    "autonomy": mod.get("autonomy", ""),
-                    "diff": _diff_from_files(mod),
-                    "changes": _structured_changes(mod),
-                    "verdict": None,
-                }
-            # 第二遍：把判定结果挂回提案
-            for line in f.read_text(encoding="utf-8").splitlines():
-                try:
-                    e = json.loads(line)
-                except Exception:
-                    continue
-                if e.get("type") not in ("blocked", "applied"):
-                    continue
-                mid = (e.get("verdict") or {}).get("mod", {}).get("mod_id", "")
-                if mid in out and out[mid]["verdict"] is None:
-                    out[mid]["verdict"] = e["verdict"].get("action", "")
+def annotation_row(proposal: dict) -> dict:
+    """相同证据只标一次，ID 与行序、时间和机器结论无关。"""
+    evidence = {
+        "layer": proposal.get("layer", ""), "title": proposal.get("title", ""),
+        "rationale": proposal.get("rationale", ""), "context": proposal.get("context", "未知"),
+        "changes_and_diff": "\n".join(filter(None, [proposal.get("changes"), proposal.get("diff")])),
+    }
+    canonical = json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"id": "P-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20], **evidence}
+
+
+def collect(live_dir: Path = LIVE_DIR, previous: Path | None = None) -> list[dict]:
+    """完整会话优先；原始流不随库分发时保留既有语料。"""
+    out = {}
+    if previous is not None and previous.exists():
+        for line in previous.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                proposal = json.loads(line)
+                out[proposal["mod_id"]] = proposal
+    for path in sorted(live_dir.glob("*.jsonl")) if live_dir.exists() else []:
+        events = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        start = next((e for e in events if e.get("type") == "session_start"), {})
+        context = json.dumps({"preauthorized": start.get("preauthorized", []),
+                              "initial_constraints": start.get("vitals", {}).get("constraints", []),
+                              "context_available": bool(start)}, ensure_ascii=False)
+        for event in events:
+            mod = event.get("mod")
+            if not isinstance(mod, dict) or not mod.get("mod_id"):
+                continue
+            mid = mod["mod_id"]
+            out[mid] = {
+                "mod_id": mid, "session": path.stem, "gen": event.get("gen"),
+                "origin": "live-" + str(event.get("raw", {}).get("kind", "?")),
+                "session_mode": start.get("mode", "unknown"), "model": start.get("model", ""),
+                "title": mod.get("title", ""), "rationale": mod.get("rationale", ""),
+                "layer": mod.get("layer", ""), "autonomy": mod.get("autonomy", ""),
+                "diff": _diff_from_files(mod), "changes": _structured_changes(mod),
+                "context": context, "modification": mod, "verdict": None,
+            }
+        for event in events:
+            if event.get("type") not in ("blocked", "applied"):
+                continue
+            verdict = event.get("verdict") or {}
+            mid = verdict.get("mod", {}).get("mod_id")
+            if mid in out:
+                out[mid]["verdict"] = verdict.get("action")
     return list(out.values())
 
 
-def main() -> int:
-    proposals = collect()
-    for p in proposals:
-        try:
-            hits = scan(load_modification(json.loads(json.dumps(
-                {"mod_id": p["mod_id"], "agent_id": "x", "round_index": p["gen"] or 0,
-                 "layer": p["layer"], "autonomy": p["autonomy"], "title": p["title"],
-                 "rationale": p["rationale"], "files": _diff_to_files(p["diff"]),
-                 "base_commit": "", "created_at": 0, "source": "corpus"}))))
-            p["scan_hits"] = [{"rule_id": h["rule_id"], "name": h["name"]} for h in hits]
-            p["scanner_dangerous"] = bool(hits)
-        except Exception:
-            p["scan_hits"] = []
-            p["scanner_dangerous"] = False
+def _read_labels(path: Path, columns: tuple[str, ...]) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    labels = {}
+    for row in rows:
+        values = {col: (row.get(col) or "").strip() for col in columns}
+        if not any(values.values()):
+            continue
+        if not row.get("id", "").startswith("P-"):
+            raise ValueError(f"{path.name} 含旧行号标注；请先按证据迁移，导出不会覆盖已填标签")
+        if row["id"] in labels and labels[row["id"]] != values:
+            raise ValueError(f"{path.name} 存在冲突的重复标注 ID")
+        labels[row["id"]] = values
+    return labels
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    with (OUT_DIR / "proposals.jsonl").open("w", encoding="utf-8") as f:
-        for p in proposals:
-            f.write(json.dumps(p, ensure_ascii=False) + "\n")
 
-    # 标注工作表：优先取有 diff 的提案，不足则重复抽样补足到 SHEET_ROWS
-    with_diff = [p for p in proposals if p["diff"].strip()]
-    rows = (with_diff * ((SHEET_ROWS // max(1, len(with_diff))) + 1))[:SHEET_ROWS]
-    with (OUT_DIR / "labeling_sheet.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["id", "session", "gen", "layer", "title", "rationale",
-                    "changes_and_diff", "scanner_label", "rater_1", "rater_2", "rater_3"])
-        for i, p in enumerate(rows, 1):
-            excerpt = p["changes"] or "（无结构化变更）"
-            if p["diff"]:
-                excerpt += "\n" + p["diff"]
-            w.writerow([f"P{i:03d}", p["session"], p["gen"], p["layer"],
-                        p["title"], p["rationale"][:120],
-                        excerpt[:800],
-                        "dangerous" if p["scanner_dangerous"] else "safe",
-                        "", "", ""])
-
-    n_blocked = sum(1 for p in proposals if p["verdict"] in ("拒绝", "上报"))
+def export_corpus(proposals: list[dict], out_dir: Path) -> dict:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    labels = _read_labels(out_dir / "labeling_sheet.csv", RATERS)
+    independent = {r: _read_labels(out_dir / f"{r}.csv", ("label",)) for r in RATERS}
+    unique = {}
+    for proposal in proposals:
+        if proposal.get("modification"):
+            try:
+                hits = scan(_mod_from_dict(proposal["modification"]))
+                proposal["scan_hits"] = [{"rule_id": h["rule_id"], "name": h["name"]} for h in hits]
+                proposal["scanner_dangerous"] = bool(hits)
+                proposal["scanner_evidence"] = "complete_modification"
+            except (ValueError, TypeError, KeyError) as exc:
+                proposal["scanner_dangerous"] = None
+                proposal["scanner_evidence"] = f"unavailable: {type(exc).__name__}"
+        else:
+            proposal.setdefault("scanner_evidence", "legacy_export_incomplete_fields")
+        proposal.setdefault("session_mode", "unknown")
+        row = annotation_row(proposal)
+        proposal["annotation_id"] = row["id"]
+        if row["changes_and_diff"].strip():
+            unique.setdefault(row["id"], row)
+    rows = sorted(unique.values(), key=lambda row: row["id"])
+    active_ids = set(unique)
+    if any(set(saved) - active_ids for saved in [labels, *independent.values()]):
+        raise ValueError("新语料缺少已填标注的稳定 ID；请先迁移，导出不会删除人工工作")
+    for name, columns, saved in [("labeling_sheet", RATERS, labels),
+                                 *((r, ("label",), independent[r]) for r in RATERS)]:
+        with (out_dir / f"{name}.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=[*EVIDENCE_FIELDS, *columns])
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({**row, **saved.get(row["id"], {})})
+    with (out_dir / "proposals.jsonl").open("w", encoding="utf-8", newline="\n") as handle:
+        for proposal in proposals:
+            handle.write(json.dumps(proposal, ensure_ascii=False) + "\n")
     stats = {
-        "generated_at": time.strftime("%Y-%m-%d %H:%M"),
-        "sessions": len({p["session"] for p in proposals}),
-        "unique_proposals": len(proposals),
-        "intercepted": n_blocked,
-        "with_diff": len(with_diff),
-        "sheet_rows": len(rows),
-        "scanner_dangerous": sum(1 for p in proposals if p["scanner_dangerous"]),
+        "schema": "ethgate.corpus/v2", "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sessions": len({p["session"] for p in proposals}), "unique_proposals": len(proposals),
+        "intercepted": sum(p.get("verdict") in ("拒绝", "上报") for p in proposals),
+        "with_diff": sum(bool(p.get("diff", "").strip()) for p in proposals),
+        "sheet_rows": len(rows), "repeated_padding": False, "blind_annotation": True,
+        "scanner_dangerous": sum(p.get("scanner_dangerous") is True for p in proposals),
+        "scanner_unknown": sum(p.get("scanner_dangerous") is None for p in proposals),
+        "by_session_mode": dict(sorted(Counter(p["session_mode"] for p in proposals).items())),
+        "human_validation": "pending; no labels are generated by this script",
     }
-    (OUT_DIR / "stats.json").write_text(
-        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    (out_dir / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    return stats
+
+
+def main() -> int:
+    stats = export_corpus(collect(previous=OUT_DIR / "proposals.jsonl"), OUT_DIR)
     print(json.dumps(stats, ensure_ascii=False, indent=2))
-    print("标注工作表已生成：请三位组员独立填写 rater_1/2/3 列后运行 tools/labeling_kappa.py")
+    print("三位组员各自领取 rater_N.csv 独立填写 label；完成后运行 tools/labeling_kappa.py")
     return 0
-
-
-def _diff_to_files(diff: str) -> list[dict]:
-    """把 diff 文本还原成 FileChange 兼容结构（扫描器只认增删行）。"""
-    files = []
-    cur: dict | None = None
-    for ln in (diff or "").splitlines():
-        if ln.startswith("--- "):
-            cur = {"path": ln[4:], "added": [], "removed": []}
-            files.append(cur)
-        elif ln.startswith("+ ") and cur is not None:
-            cur["added"].append(ln[2:])
-        elif ln.startswith("- ") and cur is not None:
-            cur["removed"].append(ln[2:])
-    return files
 
 
 if __name__ == "__main__":
