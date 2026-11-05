@@ -140,6 +140,7 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 }
 .led.is-ok i { background: var(--pass); box-shadow: 0 0 6px rgba(70, 224, 148, 0.7); }
 .led.is-fail i { background: var(--fail); box-shadow: 0 0 6px rgba(255, 84, 104, 0.7); }
+.led.is-unknown i { background: var(--warn); }
 
 /* ============================================================
    主容器与通用卡片
@@ -191,6 +192,17 @@ code { background: var(--bg3); border: 1px solid var(--line); border-radius: 4px
 }
 .tag.is-live { color: var(--accent); border-color: var(--accent-line); background: var(--accent-dim); }
 .tag.is-live::before { content: '● '; animation: blink 1.2s infinite; }
+.tag.is-valid { color: var(--pass); border-color: var(--pass); }
+.tag.is-invalid { color: var(--fail); border-color: var(--fail); }
+.tag.is-unknown { color: var(--warn); border-color: var(--warn); }
+.audit-status {
+  margin: -8px 0 20px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--bg1); font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.audit-status.is-valid { color: var(--pass); }
+.audit-status.is-invalid { color: var(--fail); background: var(--fail-soft); }
+.audit-status.is-unknown { color: var(--warn); background: var(--warn-soft); }
 @keyframes blink { 50% { opacity: 0.35; } }
 
 .btn {
@@ -282,6 +294,12 @@ html[data-theme="light"] .polyline-glow { filter: none; }
    ============================================================ */
 
 .live-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 20px; align-items: start; }
+.evidence-note {
+  padding: 13px 16px; margin-bottom: 16px; border: 1px solid var(--line2);
+  border-radius: var(--radius-sm); background: var(--bg1);
+}
+.evidence-badges { display: flex; gap: 7px; flex-wrap: wrap; }
+.evidence-note p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .live-side { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 84px; }
 .live-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 

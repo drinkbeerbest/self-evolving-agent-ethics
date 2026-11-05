@@ -24,14 +24,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.executable
 
-#: 启动必需（纯标准库）；缺失只影响部分功能
-REQUIRED_MODULES = []
+#: 配置模块直接依赖 PyYAML；风险矩阵使用 numpy。
+REQUIRED_MODULES = ["yaml", "numpy"]
 #: 实验与绘图需要（缺失时降级，不影响控制台本身）
 OPTIONAL_MODULES = [
-    ("numpy", "数值计算（实验与标定）"),
     ("pandas", "数据处理（实验汇总）"),
     ("matplotlib", "绘图（可选）"),
-    ("yaml", "YAML 配置（PyYAML）"),
 ]
 
 OK, WARN, BAD = "[ OK ]", "[WARN]", "[FAIL]"
@@ -63,6 +61,7 @@ def check_modules() -> bool:
             missing_required.append(name)
     if missing_required:
         print(f"{BAD} 缺少必需模块：{', '.join(missing_required)}")
+        print("       请运行：python -m pip install -r requirements.txt")
         return False
     for name, desc in OPTIONAL_MODULES:
         if importlib.util.find_spec(name) is None:
@@ -110,8 +109,9 @@ def run_selfcheck() -> bool:
         if any(k in line for k in ("CR =", "一致性", "kendall_w", "高危格共", "通过", "未通过")):
             print("  " + line.strip())
     if r.returncode != 0:
-        print(f"{WARN} 自检脚本返回码 {r.returncode}，继续启动")
-    return True
+        print(f"{BAD} 自检脚本返回码 {r.returncode}，停止启动")
+        print(out[-3000:])
+    return r.returncode == 0
 
 
 def check_data() -> dict:
@@ -126,7 +126,7 @@ def check_data() -> dict:
     if state["datasets"]:
         print(f"{OK} 数据集：{', '.join(state['datasets'])}")
     else:
-        print(f"{WARN} 没有数据集——仪表盘的「数据集」页会是空的")
+        print(f"{WARN} 没有本地模拟样本集——启动时自动生成")
     if state["results"]:
         print(f"{OK} 实验结果：{len(state['results'])} 份汇总")
     else:
@@ -147,14 +147,14 @@ def prepare_data(with_experiment: bool) -> None:
                 [PY, "-m", "ethgate.cli", "dataset", "--kind", kind,
                  "--out", str(ds / kind)],
                 cwd=str(ROOT),
+                check=True,
             )
-    if with_experiment and not (rs.exists() and list(rs.glob("summary_*.json"))):
+    if with_experiment:
         print("跑对照实验（5 策略 × 3 任务集 × 2 样本来源 × 5 次重复，约需数分钟）…", flush=True)
         subprocess.run(
-            [PY, "-m", "ethgate.cli", "experiment",
-             "--strategies", "none,rule,classifier,llm_review,full",
-             "--suites", "code,qa,tool", "--repeats", "5"],
+            [PY, str(ROOT / "tools" / "final_run.py")],
             cwd=str(ROOT),
+            check=True,
         )
     check_data()
 
@@ -177,7 +177,7 @@ def serve(port: int, open_browser: bool) -> int:
     port = free_port(port)
     url = f"http://127.0.0.1:{port}"
     print(f"{OK} 控制台地址：{url}")
-    print(f"{OK} 六个页面：总览 / 判定详情 / 风险矩阵 / 前沿与成本 / 数据集 / 审计链")
+    print(f"{OK} 四个页面：进化直播 / 成本账本 / 审计链 / 方法附录")
     print("   按 Ctrl+C 停止\n")
 
     env = dict(os.environ)
@@ -209,7 +209,7 @@ def serve(port: int, open_browser: bool) -> int:
             proc.wait(timeout=5)
         except Exception:
             proc.kill()
-    return 0
+    return proc.returncode if proc.returncode is not None else 1
 
 
 def main() -> int:
@@ -231,7 +231,8 @@ def main() -> int:
         print("\n环境检查未通过，请先解决上面的问题。")
         return 1
 
-    run_selfcheck()
+    if not run_selfcheck():
+        return 1
     check_data()
 
     if args.check_only:
@@ -239,7 +240,11 @@ def main() -> int:
         print("环境自检通过。去掉 --check-only 即可启动控制台。")
         return 0
 
-    prepare_data(args.with_data)
+    try:
+        prepare_data(args.with_data)
+    except subprocess.CalledProcessError as exc:
+        print(f"{BAD} 数据准备失败，返回码 {exc.returncode}")
+        return 1
     return serve(args.port, not args.no_browser)
 
 

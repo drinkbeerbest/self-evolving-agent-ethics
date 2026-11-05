@@ -5,12 +5,10 @@
 none        无门禁：直接放行，作为成本—风险坐标系的原点。
 rule        规则门禁：只跑**规则型**静态检查（权限新增、测试文件改动、网络调用、
             进程调用、日志降级），命中即拒绝；**不执行 I1-I4 形式化检查**。
-classifier  分类器门禁：自研 numpy 逻辑回归判别器（无 sklearn）。特征 = 5 个风险属性
-            + 扫描器命中数 + 层/自主度编码；**训练标签来自分类学的专家风险判断**
-            （AHP 加权风险指数 + 声明式权限/约束证据），而不是扫描器命中，
-            因此评估阶段以扫描器命中为 ground truth 不构成循环论证。
-llm_review  大模型评审门禁：用 ethgate.invariants.semantic 的评审器模拟"另一个模型"的
-            审查意见，判定为弱化即拒绝（config.llm_endpoint 非空时可接真模型）。
+classifier  分类器门禁：自研 numpy 逻辑回归；特征仅为 5 个风险属性与层/自主度编码，
+            不读取作为评估规则标签的扫描器命中数。训练标签来自合成的风险判断，
+            仍不能代替独立人工验证。
+llm_review  提示/约束语义评审：默认本地启发式；只有显式配置 llm 且实际调用端点才是模型评审。
 full        形式化加沙箱全流程：直接调用 ethgate.gates.GatePipeline.run。
 
 跨任务依赖（ethgate.gates / ethgate.invariants / ethgate.scanner）一律**延迟导入**，
@@ -63,7 +61,7 @@ STRATEGY_DISPLAY = {
     "none": "无门禁",
     "rule": "规则门禁",
     "classifier": "分类器门禁",
-    "llm_review": "大模型评审门禁",
+    "llm_review": "提示/约束启发式评审",
     "full": "形式化加沙箱全流程",
 }
 
@@ -83,12 +81,12 @@ CLASSIFIER_SEED = 20250901
 #: 分类器每个分类格生成的训练样本数
 CLASSIFIER_SAMPLES_PER_CELL = 8
 
-#: 各策略单次修改的令牌消耗估计（llm_review / full 需要"另一个模型"或沙箱）
+#: 默认本地启发式评审不产生 API token；full 为假设部署的分阶段成本模型。
 STRATEGY_TOKEN_COST = {
     "none": 0.0,
     "rule": 0.0,
     "classifier": 0.0,
-    "llm_review": 1200.0,
+    "llm_review": 0.0,
     "full": 1500.0,
 }
 #: 各策略单次修改的 GPU 秒数估计（沙箱演练最贵）
@@ -110,7 +108,7 @@ STRATEGY_LATENCY_S = {
     "none": 0.0,
     "rule": 0.05,      # 毫秒级静态规则检查
     "classifier": 0.02,  # numpy 判别，单次推理
-    "llm_review": 3.0,  # 一次模型评审
+    "llm_review": 0.02,  # 默认本地提示/约束启发式评审
     "full": 180.0,     # 静态检查 + 沙箱演练（分钟级）+ 影子期
 }
 #: 单次上报人工裁决的人力工时（小时，按抽检口径的快速裁决）
@@ -203,7 +201,7 @@ def scan_hits(mod: Modification) -> list[dict[str, Any]]:
 
 
 def _is_dangerous(mod: Modification) -> bool:
-    """ground truth：是否有扫描器规则命中。**严禁用策略自己的判断代替。**"""
+    """规则代理标签：扫描器是否命中；不等同于独立人工危险真值。"""
     return len(scan_hits(mod)) > 0
 
 
@@ -392,13 +390,13 @@ class RuleStrategy(BaseStrategy):
 class ClassifierStrategy(BaseStrategy):
     """分类器门禁：自研 numpy 逻辑回归判别器（不依赖 sklearn）。
 
-    特征（10 维）：5 个风险属性 / 5、扫描器命中数 / 8、critical 命中数 / 4、
-    层编码 / 5、自主度编码 / 2、常数 1。
+    特征（8 维）：5 个风险属性 / 5、层编码 / 5、自主度编码 / 2、常数 1。
+    不包含扫描器命中数，防止把规则真值代理直接输入判别器。
 
     训练标签**不来自扫描器**，而是专家口径：
       危险 ⟺ 所属分类格的风险指数 ≥ 高危阈值（分类学/AHP 专家判断）
               或提案本身声明了权限扩张 / 约束删除等关键证据。
-    这样评估阶段以扫描器命中为 ground truth 时不构成循环论证。
+    合成训练标签与规则评估标签都来自设计假设，尚需独立人工测试集验证。
     """
 
     name = "classifier"
@@ -424,8 +422,6 @@ class ClassifierStrategy(BaseStrategy):
     def _features(self, mod: Modification) -> np.ndarray:
         cell = find_cell(mod.layer, mod.autonomy, self.cells)
         attrs = cell.attributes if cell else cell_attributes(mod.layer, mod.autonomy)
-        hits = scan_hits(mod)
-        n_crit = sum(1 for h in hits if str(h.get("severity", "")).lower() == "critical")
         layer_idx = list(Layer).index(mod.layer)
         auto_idx = list(Autonomy).index(mod.autonomy)
         return np.array(
@@ -435,8 +431,6 @@ class ClassifierStrategy(BaseStrategy):
                 attrs.permission_expansion / 5.0,
                 attrs.goal_drift / 5.0,
                 attrs.impact_radius / 5.0,
-                len(hits) / 8.0,
-                n_crit / 4.0,
                 layer_idx / 5.0,
                 auto_idx / 2.0,
                 1.0,
@@ -598,7 +592,7 @@ def _fit_logistic(
 def _train_classifier(
     cells: Sequence[RiskCell], config: GateConfig, seed: int
 ) -> dict[str, Any]:
-    """训练分类器：特征来自风险属性 + 扫描器命中，标签来自专家风险判断。
+    """训练分类器：特征来自风险属性与分类格，标签来自合成风险判断。
 
     训练是确定性的（固定种子 + 固定特征），因此按配置缓存模型，
     避免每次构造策略都重复训练。
@@ -623,10 +617,6 @@ def _train_classifier(
             risky = rng.random() < p_risky
             mod = _synthetic_mod(cell, rng, risky)
             attrs = cell.attributes
-            hits = scan_hits(mod)
-            n_crit = sum(
-                1 for h in hits if str(h.get("severity", "")).lower() == "critical"
-            )
             feats.append(
                 np.array(
                     [
@@ -635,8 +625,6 @@ def _train_classifier(
                         attrs.permission_expansion / 5.0,
                         attrs.goal_drift / 5.0,
                         attrs.impact_radius / 5.0,
-                        len(hits) / 8.0,
-                        n_crit / 4.0,
                         list(Layer).index(mod.layer) / 5.0,
                         list(Autonomy).index(mod.autonomy) / 2.0,
                         1.0,
@@ -678,7 +666,7 @@ def _train_classifier(
 
 
 class LLMReviewStrategy(BaseStrategy):
-    """大模型评审门禁：用语义评审器模拟"另一个模型"的审查意见。
+    """提示/约束语义评审，默认本地启发式，保留 llm_review 兼容策略键。
 
     判定为弱化 → REJECT。config.llm_endpoint 非空时评审器可指向真实模型。
     """
@@ -690,6 +678,8 @@ class LLMReviewStrategy(BaseStrategy):
         super().__init__(config)
         self._judge = None
         self._judge_source = ""
+        if config.semantic_judge in ("llm", "llm_review", "model") and config.llm_endpoint:
+            self.display_name = "提示/约束端点评审（可降级）"
 
     def _get_judge(self):
         if self._judge is None:
@@ -736,6 +726,10 @@ class LLMReviewStrategy(BaseStrategy):
             results=results,
             detail={
                 "judge": self._judge_source,
+                "review_scope": "prompt_and_constraint_fields_only",
+                "review_backend": ("llm" if reviews and all(r[3].startswith("[LLM 评审 model=") for r in reviews)
+                                   else "mixed_or_fallback" if any(r[3].startswith("[LLM 评审 model=") for r in reviews)
+                                   else "heuristic" if reviews else "not_invoked"),
                 "llm_endpoint": self.config.llm_endpoint or "(未配置，使用本地评审器)",
                 "n_reviews": len(reviews),
                 "n_weakened": len(weakened_items),
