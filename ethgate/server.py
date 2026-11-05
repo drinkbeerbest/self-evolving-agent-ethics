@@ -246,7 +246,7 @@ def get_runtime() -> dict[str, Any]:
             )
             chain = AuditChain(cfg.audit_log)
             breaker = CircuitBreaker(cfg, chain)
-            pipeline = GatePipeline(cfg, cells)
+            pipeline = GatePipeline(cfg, cells, breaker=breaker)
             _RUNTIME.update(
                 {
                     "config": cfg,
@@ -264,7 +264,6 @@ def get_runtime() -> dict[str, Any]:
 def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
     rt = get_runtime()
     pipeline = rt["pipeline"]
-    breaker = rt["breaker"]
     audit = rt["audit"]
     config = rt["config"]
 
@@ -277,38 +276,11 @@ def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
             "autonomy": mod.autonomy.value,
             "title": mod.title,
             "source": mod.source,
+            "mod": to_jsonable(mod),
+            "state": to_jsonable(state),
         },
     )
-    if breaker.is_locked(mod):
-        from .types import AdmissionAction, CostLedger, GateLevel, path_key
-
-        pkey = path_key(mod.layer, mod.autonomy)
-        until = breaker.locked_paths().get(pkey)
-        verdict = {
-            "mod": to_jsonable(mod),
-            "action": AdmissionAction.REJECT.value,
-            "gate_level": int(GateLevel.STATIC),
-            "results": [],
-            "cost": CostLedger().as_dict(),
-            "cost_total": 0.0,
-            "elapsed_s": 0.0,
-            "detail": {
-                "locked": True,
-                "locked_path": pkey,
-                "locked_until": until,
-                "reason": f"路径「{pkey}」处于熔断锁定期（至 {until}），同类提案一律拒绝",
-                "cost_absolute": {"elapsed_s": 0.0, "tokens": 0.0, "gpu_s": 0.0, "comp_cost": 0.0},
-            },
-            "breaker": None,
-            "audit_hash": audit.head_hash(),
-        }
-        audit.append("verdict", verdict)
-        rt["verdicts"].insert(0, verdict)
-        rt["verdicts"] = rt["verdicts"][:200]
-        return verdict
-
     gate_result = pipeline.run(mod, state)
-    event = breaker.evaluate(mod, gate_result)
     verdict = {
         "mod": to_jsonable(mod),
         "action": gate_result.action.value,
@@ -318,10 +290,9 @@ def run_gate(mod: Modification, state: SystemState) -> dict[str, Any]:
         "cost_total": gate_result.cost.weighted_total(config.cost_weights or None),
         "elapsed_s": gate_result.elapsed_s,
         "detail": to_jsonable(gate_result.detail),
-        "breaker": to_jsonable(event) if event else None,
+        "breaker": gate_result.detail.get("breaker"),
         "audit_hash": audit.head_hash(),
     }
-    audit.append("verdict", verdict)
     rt["verdicts"].insert(0, verdict)
     rt["verdicts"] = rt["verdicts"][:200]
     return verdict
@@ -685,7 +656,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(run_gate(mod, state))
                 return
             if path == "/api/live/start":
-                self._send_json(live_start(body))
+                try:
+                    self._send_json(live_start(body))
+                except RuntimeError as exc:
+                    self._send_json({"error": str(exc)}, 409)
                 return
             if path == "/api/live/stop":
                 self._send_json(live_stop())

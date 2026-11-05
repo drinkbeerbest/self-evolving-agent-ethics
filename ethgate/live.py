@@ -17,6 +17,7 @@ import json
 import queue
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -32,12 +33,12 @@ class LiveSession:
     """一场进化直播。emit 负责落盘 + 扇出。"""
 
     def __init__(self, opts: SessionOptions, session_id: str | None = None):
-        self.session_id = session_id or f"live-{time.strftime('%Y%m%d-%H%M%S')}"
+        self.session_id = session_id or f"live-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
         self.opts = opts
         self.events: list[dict[str, Any]] = []
         self.subs: list[queue.Queue[dict[str, Any]]] = []
         self.lock = threading.Lock()
-        self.status = "pending"  # pending | running | done | stopped | error
+        self.status = "pending"  # pending | running | stopping | done | stopped | error
         self.started_at = time.time()
         self.thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -51,7 +52,8 @@ class LiveSession:
             return
         self.status = "running"
         self._session = EvolutionSession(
-            self.opts, self._emit, rng_seed=int(time.time()) % 100000
+            self.opts, self._emit, rng_seed=int(time.time()) % 100000,
+            session_id=self.session_id,
         )
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -60,18 +62,24 @@ class LiveSession:
         self._stop.set()
         if self._session is not None:
             self._session.stop_flag = True
+        with self.lock:
+            if self.status in ("pending", "running"):
+                self.status = "stopping"
 
     def _run(self) -> None:
         try:
             if self._session is None:
                 self._session = EvolutionSession(
-                    self.opts, self._emit, rng_seed=int(time.time()) % 100000
+                    self.opts, self._emit, rng_seed=int(time.time()) % 100000,
+                    session_id=self.session_id,
                 )
             summary = self._session.run()
             self.status = "stopped" if summary.get("stopped") else "done"
         except Exception as exc:  # pragma: no cover
             self._emit({"type": "error", "message": f"会话异常终止：{exc}"})
             self.status = "error"
+        finally:
+            self._close_subs()
 
     # -- 事件 -------------------------------------------------------------
     def _emit(self, event: dict[str, Any]) -> None:
@@ -91,8 +99,6 @@ class LiveSession:
                 q.put_nowait(event)
             except queue.Full:
                 pass
-        if event.get("type") in ("session_end",):
-            self._close_subs()
 
     def _close_subs(self) -> None:
         with self.lock:
@@ -108,7 +114,7 @@ class LiveSession:
         q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=2000)
         with self.lock:
             backlog = list(self.events)
-            if self.status in ("running", "pending"):
+            if self.status in ("running", "pending", "stopping"):
                 self.subs.append(q)
             else:
                 backlog.append({"type": "__end__"})
@@ -142,8 +148,12 @@ class SessionManager:
 
     def create(self, opts: SessionOptions) -> LiveSession:
         with self.lock:
-            if self.current is not None and self.current.status == "running":
-                self.current.stop()
+            if self.current is not None:
+                thread = self.current.thread
+                if ((thread is not None and thread.is_alive())
+                        or self.current.status in ("pending", "running", "stopping")):
+                    self.current.stop()
+                    raise RuntimeError("上一场会话正在停止，请等待结束后再开始新会话")
             session = LiveSession(opts)
             self.current = session
             self.history.insert(0, session.session_id)
