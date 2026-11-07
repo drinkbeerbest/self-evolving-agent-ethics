@@ -56,6 +56,8 @@ class CircuitBreaker:
         self._last_passed_global: str = ""          # 全局最近一次通过审查的版本
         self._mod_paths: dict[str, str] = {}        # mod_id -> path_key
         self._vetoes: dict[str, str] = {}           # mod_id -> 外部否决理由
+        # 审计上下文：由会话注入（session_id/mode 等），合并进判定与熔断记录
+        self.audit_context: dict = {}
 
     # -- 审计链 ---------------------------------------------------------
     @property
@@ -386,7 +388,7 @@ class CircuitBreaker:
                 "detail": event.detail,
             }
         )
-        chain.append("breaker", payload)
+        chain.append("breaker", {**self.audit_context, **payload})
 
 
 def _result_label(result: CheckResult) -> str:
