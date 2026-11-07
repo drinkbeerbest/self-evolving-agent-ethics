@@ -1043,6 +1043,10 @@ class EvolutionSession:
         pipeline_cls = _import_pipeline()
         pipeline = pipeline_cls(cfg, cells, breaker=breaker)
         self._cost_weights = cfg.cost_weights or None
+        # 审计上下文：判定/熔断/裁决记录统一携带会话信息（跨视图联动依赖）
+        audit_ctx = {"session_id": self._sid}
+        breaker.audit_context = audit_ctx
+        pipeline.audit_context = audit_ctx
 
         # 模式解析
         mode = self.opts.mode
@@ -1053,6 +1057,9 @@ class EvolutionSession:
         if mode == "auto":
             mode = "live" if api_cfg else "offline"
         self._mode = mode
+        audit_ctx["mode"] = mode
+        breaker.audit_context = audit_ctx
+        pipeline.audit_context = audit_ctx
         if api_cfg and mode == "live":
             self._llm = LLMClient(api_cfg, should_stop=self._check_stop)
 
@@ -1390,6 +1397,9 @@ class EvolutionSession:
     ) -> dict[str, Any]:
         """跑门禁并产出与控制台 run_gate 同构的判定字典。"""
         state = self._vitals.to_state()
+        per_call = {"gen": mod.round_index, "source": mod.source}
+        pipeline.audit_context = {**pipeline.audit_context, **per_call}
+        breaker.audit_context = {**breaker.audit_context, **per_call}
         chain.append(
             "propose",
             {
