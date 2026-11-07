@@ -14,6 +14,7 @@ const L = {
   running: false, es: null, sessionId: null, mode: 'auto',
   scores: [], stats: { passed: 0, blocked: 0, api_tokens: 0 },
   cost: 0, elapsed: 0, replayToken: 0, finished: false, taskCount: 0,
+  gateMode: 'enforce', monitorViolations: 0, overlaySeries: null,
   tiles: { ids: [], kinds: {}, ok: {} },   // 任务卡阵：跨代追踪每道题 ✗/✓
   lineage: [],                              // 逐代谱系：变化图标 + 分数
   lastApplied: null,                        // 最近一次放行（翻转因果标注）
@@ -130,7 +131,9 @@ function renderLiveStats() {
   const first = L.scores.length ? L.scores[0] : null;
   const tiles = [
     { label: '已进化', value: `${L.scores.length} 代`, sub: L.sessionId && L.running ? '进行中' : (L.finished ? '本场结束' : '待机') },
-    { label: '拦截', value: L.stats.blocked, sub: '门禁判定拒绝或上报', cls: L.stats.blocked ? 'is-fail' : '' },
+    L.gateMode === 'monitor'
+      ? { label: '违规放行', value: L.monitorViolations, sub: '原应拦截、监督模式放行', cls: L.monitorViolations ? 'is-warn' : '' }
+      : { label: '拦截', value: L.stats.blocked, sub: '门禁判定拒绝或上报', cls: L.stats.blocked ? 'is-fail' : '' },
     { label: '放行', value: L.stats.passed, sub: '门禁判定放行并生效', cls: 'is-pass' },
     { label: '本场最佳分', value: best === null ? '—' : best,
       sub: L.ceiling !== null
@@ -199,8 +202,8 @@ function renderLineage() {
   if (!strip) return;
   if (!L.lineage.length) { strip.innerHTML = ''; return; }
   strip.innerHTML = L.lineage.map((g, i) => {
-    const icon = g.blocked ? '🔴' : g.observe ? '·' : (KIND_ICON[g.kind] || '✚');
-    const cls = g.blocked ? 'is-blocked' : g.observe ? 'is-observe' : 'is-applied';
+    const icon = g.warn ? '⚠️' : g.blocked ? '🔴' : g.observe ? '·' : (KIND_ICON[g.kind] || '✚');
+    const cls = g.warn ? 'is-warn' : g.blocked ? 'is-blocked' : g.observe ? 'is-observe' : 'is-applied';
     const prev = i > 0 ? L.lineage[i - 1].score : null;
     const delta = prev !== null ? g.score - prev : null;
     const deltaTxt = delta === null ? '' : ` <em>${delta > 0 ? '+' : ''}${delta}</em>`;
@@ -280,6 +283,16 @@ function renderCapChart() {
   const pts = L.scores.map((s, i) => `${x(i)},${y(s)}`);
   svg += `<polygon points="${PAD.l},${y(0)} ${pts.join(' ')} ${x(L.scores.length - 1)},${y(0)}" fill="${P.area}"/>`;
   svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${P.line}" stroke-width="2" stroke-linejoin="round"/>`;
+  if (L.gateMode === 'monitor' && L.overlaySeries && L.overlaySeries.length) {
+    const m = Math.max(L.overlaySeries.length, L.scores.length) - 1;
+    const ox = (i) => PAD.l + (iw * i) / Math.max(m, 1);
+    const opts = L.overlaySeries.map((s, i) => `${ox(i)},${y(s)}`);
+    svg += `<polyline points="${opts.join(' ')}" fill="none" stroke="#ff5468" stroke-width="1.6" stroke-dasharray="6 4" opacity="0.85"/>`;
+    L.overlaySeries.forEach((s, i) => {
+      svg += `<circle cx="${ox(i)}" cy="${y(s)}" r="3" fill="#ff5468" opacity="0.85"/>`;
+    });
+    svg += `<text x="${ox(L.overlaySeries.length - 1)}" y="${y(L.overlaySeries[L.overlaySeries.length - 1]) - 12}" font-size="10" fill="#ff5468" text-anchor="end" font-family="JetBrains Mono,monospace">上次拦截场</text>`;
+  }
   L.scores.forEach((s, i) => {
     svg += `<circle cx="${x(i)}" cy="${y(s)}" r="4" fill="${P.line}" stroke="${P.stroke}" stroke-width="1.5"/>
       <text x="${x(i)}" y="${y(s) - 9}" font-size="10.5" fill="${P.label}" text-anchor="middle" font-family="JetBrains Mono,monospace">${s}</text>
@@ -312,8 +325,12 @@ function addCard(evt) {
   const mod = v.mod || {};
   const action = v.action || '';
   const locked = v.detail && v.detail.locked;
-  const cls = action === '放行' ? 'pass' : (action === '拒绝' || locked) ? 'fail' : 'warn';
-  const icon = action === '放行' ? '🟢' : '🔴';
+  const mon = v.detail && v.detail.monitor_mode;
+  const orig = mon ? (v.detail.original_action || '放行') : null;
+  const cls = mon
+    ? (orig === '放行' ? 'pass' : 'warn')
+    : action === '放行' ? 'pass' : (action === '拒绝' || locked) ? 'fail' : 'warn';
+  const icon = cls === 'pass' ? '🟢' : '🔴';
   const results = v.results || [];
   const failed = results.filter((r) => r.status !== '通过').slice(0, 2);
   const why = failed.length
@@ -326,13 +343,14 @@ function addCard(evt) {
   card.innerHTML = `
     <div class="evo-head">
       <span class="evo-icon">${icon}</span>
-      <span class="badge ${cls}">${esc(locked ? '路径锁定·拒绝' : action)}</span>
+      <span class="badge ${cls}">${esc(locked ? '路径锁定·拒绝' : (mon ? '监督放行' : action))}</span>
       <span class="evo-gen">第 ${esc(evt.gen)} 代</span>
       <span class="evo-hash" title="审计哈希">${esc(String(v.audit_hash || '').slice(0, 12))}</span>
     </div>
     <div class="evo-title">${esc(mod.title || '(未命名提案)')}</div>
     ${mod.rationale ? `<div class="evo-why">提案理由：${esc(mod.rationale)}</div>` : ''}
     <div class="evo-note">${esc(evt.note || '')}</div>
+    ${mon && orig !== '放行' ? `<div class="evo-warn-line">⚠ 监督模式：本会被拦截（原判定 ${esc(orig)}${(v.detail.violations || []).length ? ' · ' + esc((v.detail.violations || []).join('、')) : ''}），此处放行以观后效</div>` : ''}
     <div class="evo-foot">
       <span class="badge neutral">${esc(mod.layer || '')}</span>
       <span class="evo-verdict">${esc(why)}</span>
@@ -369,11 +387,20 @@ function handleEvent(evt) {
       L.tiles = { ids: evt.task_ids || [], kinds: evt.task_kinds || {}, ok: {} };
       L.lineage = []; L.lastApplied = null; L.lastAppliedKind = null;
       L.prevVitals = null; L.ceiling = (evt.ceiling === undefined) ? null : evt.ceiling;
+      L.gateMode = evt.gate_mode || 'enforce'; L.monitorViolations = 0;
+      L.overlaySeries = null;
       L.running = true; L.finished = false;
+      if (L.gateMode === 'monitor') {
+        api('/api/pulse').then((pulse) => {
+          const last = (pulse.sessions || []).find((s) => s.gate_mode === 'enforce' && s.score_series?.length);
+          if (last) { L.overlaySeries = last.score_series; renderCapChart(); }
+        }).catch(() => {});
+      }
       clearStream(); renderLiveStats(); renderCapChart(); renderVitals(evt.vitals);
       renderTiles(); renderLineage();
-      $('#ceilingTag').textContent = L.ceiling !== null
-        ? `授权闭包边界 ${L.ceiling}%` : '待机';
+      $('#ceilingTag').textContent = L.gateMode === 'monitor'
+        ? (L.ceiling !== null ? `对照：门禁场上限 ${L.ceiling}%` : '监督对照（无拦截）')
+        : (L.ceiling !== null ? `授权闭包边界 ${L.ceiling}%` : '待机');
       $('#liveTag').textContent = (L.isReplay ? '回放 · ' : 'LIVE · ') + (evt.mode === 'live'
         ? `${evt.provider || ''} ${evt.model || ''}`.trim() : '离线脚本');
       $('#liveTag').classList.toggle('is-live', !L.isReplay);
@@ -417,6 +444,10 @@ function handleEvent(evt) {
       L.cost += Number(abs.comp_cost || 0);
       L.elapsed += Number(abs.elapsed_s || 0);
       if (evt.type === 'applied') L.lastApplied = { gen: evt.gen, note: evt.note || '' };
+      const monV = v.detail && v.detail.monitor_mode;
+      if (monV && v.detail.original_action && v.detail.original_action !== '放行') {
+        L.monitorViolations += 1;
+      }
       addCard(evt);
       setStatus(`第 ${evt.gen} 代：判定完成 —— ${v.action}`);
       break;
@@ -429,6 +460,7 @@ function handleEvent(evt) {
         kind: L.lastAppliedKind,
         blocked: evt.action === '拒绝' || evt.action === '上报',
         observe: !evt.action,
+        warn: evt.gate_mode === 'monitor' && evt.original_action && evt.original_action !== '放行',
       });
       renderLiveStats(); renderCapChart(); renderLineage();
       renderVitalsDiff(L.prevVitals, evt.vitals);
@@ -466,7 +498,7 @@ async function startLive() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         mode, generations: Number($('#ctlGens').value), pressure: $('#ctlPressure').checked,
-        scenario: $('#ctlScenario').value || '',
+        scenario: $('#ctlScenario').value || '', gate_mode: L.gateMode,
       }),
     });
     const sid = resp.session.session_id;
@@ -1189,6 +1221,16 @@ $('#modeSeg').addEventListener('click', (e) => {
 });
 $('#ctlGens').addEventListener('input', () => {
   $('#ctlGensVal').textContent = `${$('#ctlGens').value} 代`;
+});
+$('#gateSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  $$('#gateSeg .seg-btn').forEach((x) => x.classList.remove('is-active'));
+  b.classList.add('is-active');
+  L.gateMode = b.dataset.gate;
+  $('#gateDesc').textContent = L.gateMode === 'monitor'
+    ? '监督对照：违规提案放行但全额记账——用于和拦截场对比"对齐成本"。'
+    : '拦截模式：违规提案被拦下、回滚并锁定路径。';
 });
 $('#ctlScenario').addEventListener('change', () => {
   L.scenarioKey = $('#ctlScenario').value;
