@@ -76,7 +76,9 @@ class GatePipeline:
       pipeline.sandbox       SandboxSuite 实例
       pipeline.behavior_probe 影子期行为度量函数
       pipeline.breaker       CircuitBreaker 实例
+      pipeline.audit_context 审计上下文（session_id/gen/source 等，写入判定记录）
     """
+
 
     def __init__(
         self,
@@ -86,6 +88,7 @@ class GatePipeline:
         breaker: CircuitBreaker | None = None,
     ):
         self.config = config
+        self.audit_context: dict = {}  # 会话级注入；控制台路径标 origin=console
         self.cells: list[RiskCell] = (
             list(cells)
             if cells is not None
@@ -513,8 +516,12 @@ class GatePipeline:
         chain = self.breaker.audit_chain
         if chain is None:
             return
+        # 会话上下文（session_id/gen/source 等）由执行方注入，合并进判定记录，
+        # 保证审计页的"会话"列对判定/熔断/裁决全部生效。
+        ctx = getattr(self, "audit_context", None) or getattr(self.breaker, "audit_context", {}) or {}
         payload = to_jsonable(
             {
+                **ctx,
                 "mod_id": mod.mod_id,
                 "agent_id": mod.agent_id,
                 "layer": mod.layer,
@@ -533,6 +540,7 @@ class GatePipeline:
                 "escalate",
                 to_jsonable(
                     {
+                        **ctx,
                         "mod_id": mod.mod_id,
                         "level": int(res.level),
                         "reason": res.detail.get("reason", ""),
