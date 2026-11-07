@@ -228,9 +228,19 @@ def aggregate_sessions(limit: int = 30) -> list[dict[str, Any]]:
                     or f"{(v.get('mod') or {}).get('layer', '')}×{(v.get('mod') or {}).get('autonomy', '')}")
             if e.get("type") == "blocked":
                 cells[cell] = cells.get(cell, 0) + 1
+        violations = 0
+        for e in events:
+            if e.get("type") != "applied":
+                continue
+            d = (e.get("verdict") or {}).get("detail") or {}
+            oa = d.get("original_action")
+            if d.get("monitor_mode") and oa and oa != "放行":
+                violations += 1
         out.append({
             "session_id": f.stem,
             "mode": start.get("mode", "?"),
+            "gate_mode": start.get("gate_mode", "enforce"),
+            "violations": violations,
             "model": start.get("model", ""),
             "scenario": (start.get("scenario") or {}).get("name", ""),
             "scenario_key": (start.get("scenario") or {}).get("key", ""),
