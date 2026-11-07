@@ -483,6 +483,7 @@ def live_start(body: dict[str, Any]) -> dict[str, Any]:
         pressure=bool(body.get("pressure", True)),
         speed=float(body.get("speed", 1.0)),
         scenario_key=str(body.get("scenario", "")),
+        gate_mode=str(body.get("gate_mode", "enforce")),
         seed=(int(body["seed"]) if body.get("seed") is not None else None),
     )
     opts.generations = max(1, min(20, opts.generations))
