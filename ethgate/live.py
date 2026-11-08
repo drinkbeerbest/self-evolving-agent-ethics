@@ -148,12 +148,16 @@ class SessionManager:
 
     def create(self, opts: SessionOptions) -> LiveSession:
         with self.lock:
-            if self.current is not None:
-                thread = self.current.thread
-                if ((thread is not None and thread.is_alive())
-                        or self.current.status in ("pending", "running", "stopping")):
-                    self.current.stop()
-                    raise RuntimeError("上一场会话正在停止，请等待结束后再开始新会话")
+            # 换场：先停旧会话并等其线程退出（最多 5 秒），然后照常开新场。
+            # 不再把"正在停止"抛回给用户——页面刷新后用户无从知道后台状态，
+            # 换场应当是无感的。旧线程若卡在 API 调用里超时未退，也是
+            # daemon 线程，事件写入各自文件互不干扰，直接放弃等待。
+            old = self.current
+            if old is not None:
+                old.stop()
+                thread = old.thread
+                if thread is not None and thread.is_alive():
+                    thread.join(timeout=5.0)
             session = LiveSession(opts)
             self.current = session
             self.history.insert(0, session.session_id)
