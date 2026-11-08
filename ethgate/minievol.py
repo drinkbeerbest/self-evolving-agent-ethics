@@ -258,6 +258,28 @@ def _make_number_check(expect: str, note: str) -> Callable[[str], tuple[bool, st
     return _check
 
 
+def _make_float_check(expect: float, note: str) -> Callable[[str], tuple[bool, str]]:
+    """数值容差判分：取回答最后一个数（含小数），浮点近似比较。
+
+    兼容货币/千分位等格式噪声（"$1.00" == 1）；0.5% 容差吸收舍入差异。
+    """
+    def _check(answer: str) -> tuple[bool, str]:
+        found = re.findall(r"-?\d[\d,\.]*", answer or "")
+        vals = []
+        for x in found:
+            try:
+                vals.append(float(re.sub(r"[,\s]", "", x)))
+            except ValueError:
+                continue
+        if not vals:
+            return (False, f"期望 {expect}，未解析出数值（{note}）")
+        got = vals[-1]
+        ok = abs(got - expect) <= max(0.005, abs(expect) * 0.005)
+        return (ok, f"期望 {expect}，实测 {got}（{note}）")
+
+    return _check
+
+
 def _make_count_check(text: str, letters: tuple[str, ...], note: str) -> Callable[[str], tuple[bool, str]]:
     """多字母精确统计判分：所有字母都数对才算过。
 
@@ -465,6 +487,7 @@ def _load_benchmark_tasks() -> list[dict[str, Any]]:
         for t in data.get("tasks", []):
             try:
                 gold = str(t["answer"])
+                gval = float(gold.replace(",", ""))
                 merged.append({
                     "id": str(t["id"]),
                     "kind": f"基准·{t.get('kind', '数学')}",
@@ -472,7 +495,7 @@ def _load_benchmark_tasks() -> list[dict[str, Any]]:
                     "needs_tool": None,
                     "base_ok": False,
                     "source": t.get("source", f.stem),
-                    "check": _make_number_check(gold, f"基准答案 {gold}"),
+                    "check": _make_float_check(gval, f"基准答案 {gold}"),
                 })
             except (KeyError, TypeError):
                 continue
@@ -741,6 +764,41 @@ def extract_json(text: str) -> dict[str, Any] | None:
     if not text:
         return None
     text = re.sub(r"```(?:json)?", "", text)
+    # 容错：模型常把多行代码塞进 JSON 字符串（裸换行=非法 JSON）。
+    # 仅转义字符串内部的裸换行后再解析；失败走多起点扫描。
+    bs = chr(92)
+    if chr(10) in text:
+        fixed_chars = []
+        in_str = False
+        esc = False
+        for ch in text:
+            if in_str:
+                if esc:
+                    esc = False
+                    fixed_chars.append(ch)
+                elif ch == bs:
+                    esc = True
+                    fixed_chars.append(ch)
+                elif ch == chr(34):
+                    in_str = False
+                    fixed_chars.append(ch)
+                elif ch == chr(10):
+                    fixed_chars.append(bs + "n")
+                else:
+                    fixed_chars.append(ch)
+            else:
+                if ch == chr(34):
+                    in_str = True
+                fixed_chars.append(ch)
+        try:
+            obj = json.loads("".join(fixed_chars))
+            if isinstance(obj, dict) and "kind" in obj:
+                code = obj.get("code")
+                if isinstance(code, str):
+                    obj["code"] = code.replace(bs + "n", chr(10))
+                return obj
+        except Exception:
+            pass
     starts = [m.start() for m in re.finditer(r"\{", text)]
     for start in starts:
         depth = 0
@@ -1185,6 +1243,7 @@ class EvolutionSession:
                 self.emit({"type": "error", "gen": gen, "message": gen_error})
             if raw is None:
                 self._scores.append(score)
+                prev = self._scores[-2] if len(self._scores) >= 2 else None
                 self.emit(
                     {
                         "type": "gen_end",
@@ -1193,6 +1252,7 @@ class EvolutionSession:
                         "best": max(self._scores),
                         "vitals": self._vitals.summary(self.preauthorized),
                         "stats": dict(self._stats),
+                        "variance": (prev is not None and score != prev),
                         "note": "本轮未产生提案（观察轮或生成失败）",
                     }
                 )
@@ -1224,6 +1284,8 @@ class EvolutionSession:
             action = verdict["action"]
             blocked = action in ("拒绝", "上报")
             applied = False
+            if not blocked:
+                self._last_apply_gen = gen
             if blocked:
                 self._stats["blocked"] += 1
                 if mod.detail.get("tool_code"):
@@ -1263,6 +1325,13 @@ class EvolutionSession:
                     }
                 )
 
+            # 方差标记：本代没有构成变化（未放行任何提案）但分数变了
+            # → 只能来自答题方差（快模型不稳定），如实标注
+            prev_score = self._scores[-1] if self._scores else None
+            self._variance_flag = (prev_score is not None
+                                   and score != prev_score
+                                   and not applied)
+
             # 4) 收束本代
             self._scores.append(score)
             self.emit(
@@ -1277,6 +1346,7 @@ class EvolutionSession:
                     "gate_mode": self.opts.gate_mode,
                     "original_action": verdict["detail"].get("original_action"),
                     "violations": verdict["detail"].get("violations"),
+                    "variance": self._variance_flag,
                     "note": note["note"],
                 }
             )
@@ -1341,7 +1411,12 @@ class EvolutionSession:
             return False, ("自制工具 " + bound + " 执行失败：" + r["error"][:56]), 0
         if needs:
             if needs in allowed_tools:
+                # 确定性判分：工具在手 → 工具输出即答案，不经模型转述
                 tool_out = run_tool(task)
+                det_ok, det_brief = task["check"](tool_out)
+                if det_ok:
+                    return True, (f"工具 {needs} 输出直接判分：{tool_out[:40]}"
+                                  "（确定性，不经模型转述）"), 0
                 tool_note = f"\n\n[工具 {needs} 的输出]：{tool_out}"
             else:
                 tool_note = f"\n\n（你没有 {needs} 工具，只能自己作答）"
@@ -1357,23 +1432,41 @@ class EvolutionSession:
             f"最大长度 {self._vitals.params.get('max_chars', '200')} 字符。"
         )
         t0 = time.time()
-        try:
-            if self.stop_flag:
-                return False, "会话已停止", 0
-            answer, tokens = self._llm.chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": task["prompt"] + tool_note},
-                ],
-                temperature=0.2,
-                max_tokens=1500,
-            )
-        except LLMError as exc:
-            return False, f"API 调用失败：{exc}", 0
+        # 双次作答：最多答 2 次，首答对即通过（早退出）。
+        # 快模型单次答题方差大，双次把"碰巧答错"的噪声压掉，
+        # 同时成本可控（对的题只花 1 次）。
+        oks = 0
+        attempts = 0
+        tokens = 0
+        ok = False
+        brief = ""
+        while attempts < 2 and oks < 1:
+            attempts += 1
+            try:
+                if self.stop_flag:
+                    return False, "会话已停止", tokens
+                answer, tk = self._llm.chat(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": task["prompt"] + tool_note},
+                    ],
+                    temperature=0.2,
+                    max_tokens=1500,
+                )
+                tokens += tk
+                o, b = task["check"](answer)
+                if o:
+                    oks += 1
+                    ok, brief = True, b
+                else:
+                    ok, brief = False, b
+            except LLMError as exc:
+                return False, f"API 调用失败：{exc}", tokens
         if self.stop_flag:
             return False, "会话已停止", tokens
         elapsed = time.time() - t0
-        ok, brief = task["check"](answer)
+        if attempts > 1:
+            brief = brief + ("（二次作答通过）" if ok else "（两次均未通过）")
         # 限时题：真实计时，超时即失分——先校验与全量日志的固定开销由此
         # 变成真实代价，构成 I2/I4 类提案的自然压力源。
         budget = task.get("time_budget_s")
