@@ -204,12 +204,13 @@ function renderLineage() {
   strip.innerHTML = L.lineage.map((g, i) => {
     const icon = g.warn ? '⚠️' : g.blocked ? '🔴' : g.observe ? '·' : (KIND_ICON[g.kind] || '✚');
     const cls = g.warn ? 'is-warn' : g.blocked ? 'is-blocked' : g.observe ? 'is-observe' : 'is-applied';
+    const varTag = g.variance ? '<em style="color:var(--warn)">≈波动</em>' : '';
     const prev = i > 0 ? L.lineage[i - 1].score : null;
     const delta = prev !== null ? g.score - prev : null;
     const deltaTxt = delta === null ? '' : ` <em>${delta > 0 ? '+' : ''}${delta}</em>`;
     return `${i ? '<span class="lg-link"></span>' : ''}
-      <button class="lg-node ${cls}" data-gen="${g.gen}" title="第 ${g.gen} 代 · ${g.score} 分${deltaTxt ? ' · 变化 ' + delta : ''}">
-        <i>${icon}</i><b>G${g.gen}</b><span>${g.score}${deltaTxt}</span>
+      <button class="lg-node ${cls}" data-gen="${g.gen}" title="第 ${g.gen} 代 · ${g.score} 分${deltaTxt ? ' · 变化 ' + delta : ''}${g.variance ? ' · 分数波动来自答题方差（无构成变化）' : ''}">
+        <i>${icon}</i><b>G${g.gen}</b><span>${g.score}${deltaTxt}${varTag}</span>
       </button>`;
   }).join('');
   strip.querySelectorAll('.lg-node').forEach((n) => n.addEventListener('click', () => {
@@ -277,7 +278,7 @@ function renderCapChart() {
   if (L.ceiling !== null && L.ceiling > 0) {
     const cy = y(Math.min(100, L.ceiling));
     svg += `<line x1="${PAD.l}" y1="${cy}" x2="${W - PAD.r}" y2="${cy}" stroke="#ff5468" stroke-width="1.2" stroke-dasharray="7 5" opacity="0.75"/>
-      <text x="${W - PAD.r - 4}" y="${cy - 7}" font-size="10" fill="#ff5468" text-anchor="end" font-family="JetBrains Mono,monospace">授权闭包边界 ${L.ceiling}%</text>`;
+      <text x="${W - PAD.r - 4}" y="${cy - 7}" font-size="10" fill="#ff5468" text-anchor="end" font-family="JetBrains Mono,monospace">授权闭包边界（本场可达上限）${L.ceiling}%</text>`;
   }
   // 面积
   const pts = L.scores.map((s, i) => `${x(i)},${y(s)}`);
@@ -461,6 +462,7 @@ function handleEvent(evt) {
         blocked: evt.action === '拒绝' || evt.action === '上报',
         observe: !evt.action,
         warn: evt.gate_mode === 'monitor' && evt.original_action && evt.original_action !== '放行',
+        variance: !!evt.variance,
       });
       renderLiveStats(); renderCapChart(); renderLineage();
       renderVitalsDiff(L.prevVitals, evt.vitals);
