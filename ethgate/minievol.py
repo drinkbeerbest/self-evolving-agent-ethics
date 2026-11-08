@@ -1212,6 +1212,9 @@ class EvolutionSession:
                 "task_count": len(self._tasks),
                 "task_ids": [t["id"] for t in self._tasks],
                 "task_kinds": {t["id"]: t["kind"] for t in self._tasks},
+                "tasks": [{"id": t["id"], "kind": t["kind"], "prompt": t["prompt"],
+                           "needs_tool": t.get("needs_tool") or "",
+                           "tool_args": (t.get("tool_args") or "")[:400]} for t in self._tasks],
                 "ceiling": self._ceiling,
                 "unsolvable": self._unsolvable,
                 "preauthorized": sorted(self.preauthorized),
@@ -1372,7 +1375,7 @@ class EvolutionSession:
         for task in self._tasks:
             if self.stop_flag:
                 break
-            ok, brief, api_tokens = self._solve_one(task)
+            ok, brief, api_tokens, full_answer = self._solve_one(task)
             self._stats["api_tokens"] += api_tokens
             if self.stop_flag:
                 break
@@ -1380,24 +1383,26 @@ class EvolutionSession:
             if task.get("time_budget_s") and not ok and "超时" in brief:
                 timeouts += 1
             results.append(
-                {"id": task["id"], "kind": task["kind"], "ok": ok, "brief": brief}
+                {"id": task["id"], "kind": task["kind"], "ok": ok,
+                 "brief": brief, "answer": full_answer}
             )
             self.emit(
                 {"type": "task", "gen": gen, "task": task["id"], "ok": ok,
-                 "brief": brief}
+                 "brief": brief, "answer": full_answer,
+                 "prompt": task["prompt"]}
             )
             self._pace(0.25)
         self._unsolved = [r["kind"] for r in results if not r["ok"]]
         self._timeouts = timeouts
         return results, round(passed / max(1, len(self._tasks)) * 100)
 
-    def _solve_one(self, task: dict[str, Any]) -> tuple[bool, str, int]:
-        """解一道题。返回 (是否通过, 简述, api_tokens)。"""
+    def _solve_one(self, task: dict[str, Any]) -> tuple[bool, str, int, str]:
+        """解一道题。返回 (是否通过, 简述, api_tokens, 完整回答)。"""
         if self.stop_flag:
-            return False, "会话已停止", 0
+            return False, "会话已停止", 0, ""
         if self._mode != "live" or self._llm is None:
             ok, brief = _offline_answer(task, self._vitals)
-            return ok, brief, 0
+            return ok, brief, 0, ""
 
         needs = task.get("needs_tool")
         tool_note = ""
@@ -1407,8 +1412,8 @@ class EvolutionSession:
             r = _run_tool_code(self._tools_registry[bound]["code"], task.get("tool_args") or "")
             if r["ok"]:
                 return True, ("自制工具 " + bound + " 输出：" + r["output"][:44]
-                              + "（绑定生效，不消耗 API）"), 0
-            return False, ("自制工具 " + bound + " 执行失败：" + r["error"][:56]), 0
+                              + "（绑定生效，不消耗 API）"), 0, r["output"]
+            return False, ("自制工具 " + bound + " 执行失败：" + r["error"][:56]), 0, ""
         if needs:
             if needs in allowed_tools:
                 # 确定性判分：工具在手 → 工具输出即答案，不经模型转述
@@ -1416,7 +1421,7 @@ class EvolutionSession:
                 det_ok, det_brief = task["check"](tool_out)
                 if det_ok:
                     return True, (f"工具 {needs} 输出直接判分：{tool_out[:40]}"
-                                  "（确定性，不经模型转述）"), 0
+                                  "（确定性，不经模型转述）"), 0, tool_out
                 tool_note = f"\n\n[工具 {needs} 的输出]：{tool_out}"
             else:
                 tool_note = f"\n\n（你没有 {needs} 工具，只能自己作答）"
@@ -1440,11 +1445,12 @@ class EvolutionSession:
         tokens = 0
         ok = False
         brief = ""
+        best_answer = ""
         while attempts < 2 and oks < 1:
             attempts += 1
             try:
                 if self.stop_flag:
-                    return False, "会话已停止", tokens
+                    return False, "会话已停止", tokens, ""
                 answer, tk = self._llm.chat(
                     [
                         {"role": "system", "content": system},
@@ -1458,12 +1464,15 @@ class EvolutionSession:
                 if o:
                     oks += 1
                     ok, brief = True, b
+                    best_answer = answer
                 else:
                     ok, brief = False, b
+                    if not best_answer:
+                        best_answer = answer
             except LLMError as exc:
-                return False, f"API 调用失败：{exc}", tokens
+                return False, f"API 调用失败：{exc}", tokens, ""
         if self.stop_flag:
-            return False, "会话已停止", tokens
+            return False, "会话已停止", tokens, best_answer
         elapsed = time.time() - t0
         if attempts > 1:
             brief = brief + ("（二次作答通过）" if ok else "（两次均未通过）")
@@ -1472,12 +1481,12 @@ class EvolutionSession:
         budget = task.get("time_budget_s")
         if ok and budget and elapsed > float(budget):
             return False, (f"回答正确但超时：{elapsed:.1f}s > {budget}s"
-                           f"（固定开销：先校验+全量日志）"), tokens
+                           f"（固定开销：先校验+全量日志）"), tokens, best_answer
         time_note = f"用时 {elapsed:.1f}s" + (
             f"，超预算 {budget}s！" if budget and elapsed > float(budget) else ""
         ) if budget else ""
         brief = (brief + f"｜{time_note}") if time_note else brief
-        return ok, f"回答：{answer.strip()[:60]}…（{brief}）", tokens
+        return ok, brief, tokens, best_answer or answer
 
     def _make_proposal(self, gen: int) -> tuple[dict[str, Any] | None, str]:
         """生成一个自我修改提案。返回 (提案, 错误信息)。"""
