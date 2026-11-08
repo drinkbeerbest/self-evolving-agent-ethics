@@ -31,7 +31,7 @@ PROMPT_HEAD = (
 def claude_text(prompt: str) -> str:
     proc = subprocess.run(
         [CLAUDE, "-p", prompt, "--output-format", "stream-json", "--verbose"],
-        capture_output=True, text=True, timeout=300, encoding="utf-8",
+        capture_output=True, text=True, timeout=75, encoding="utf-8",
         errors="replace",
     )
     texts: list[str] = []
