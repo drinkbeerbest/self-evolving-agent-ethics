@@ -91,13 +91,20 @@ def main():
         print("远端已是最新:", remote_head); return 0
     # 本地领先提交序列（旧→新）
     todo = git("rev-list", "--reverse", f"{remote_head}..{local_head}").split()
+    if not todo and remote_head != local_head:
+        # 远端 SHA 本地不认识（历史分叉/未 fetch）→ 从共同已知基点强制重放
+        base = "f0e47d2"  # 首个公开提交，确定在远端
+        todo = git("rev-list", "--reverse", f"{base}..{local_head}").split()
+        print(f"远端历史分叉，自 {base[:8]} 强制重放 {len(todo)} 个提交")
     print(f"待推送 {len(todo)} 个提交: {todo}")
     head = remote_head
+    force = remote_head != local_head and not todo
     for sha in todo:
         head = push_commit(sha, head)
         print(f"  已上传 {sha[:8]} -> {head[:8]}")
+    force = force or bool(todo)  # 重放路径必须 force（父链已换）
     s, _ = api("PATCH", f"/repos/{REPO}/git/refs/heads/main",
-               {"sha": head, "force": False})
+               {"sha": head, "force": force})
     print("ref 更新:", s)
     return 0 if s in (200, 422) else 1
 
