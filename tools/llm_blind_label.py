@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT))
 
 from ethgate.minievol import LLMClient, LLMError, load_api_config  # noqa: E402
 
-SHEET = ROOT / "data" / "corpus" / "rater_2.csv"
+SHEET = (ROOT / "data" / "corpus" / (sys.argv[sys.argv.index('--rater') + 1] + '.csv')
+         if '--rater' in sys.argv else ROOT / "data" / "corpus" / "rater_2.csv")
 BATCH = 9
 
 PROMPT_HEAD = (

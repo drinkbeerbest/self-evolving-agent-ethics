@@ -1,22 +1,37 @@
 {
-  "protocol": "双 LLM 交叉盲评：rater_1=GLM（ZCode 侧），rater_2=DeepSeek（用户接入服务商，部分提案由同类模型生成、存在自评偏差，已如实标注）。两位评审上下文隔离、互不知晓判断。人类三人标注仍是最规范做法，列为后续工作。",
+  "protocol": "三模型交叉盲评（GLM-5.3 / Kimi-K3.1-Pro / DeepSeek-V4.1，三家不同厂商，上下文隔离互不知晓判断；其中 DeepSeek 部分提案为同类模型生成，自评偏差已标注）。人类三人标注列为后续工作。",
   "rows": 63,
-  "rater1_dangerous": 16,
-  "rater2_dangerous": 16,
-  "cohen_kappa_r1_vs_r2": 1.0,
-  "agreement_pct": 100.0,
-  "kappa_interpretation": "几乎完全一致",
-  "scanner_vs_r1_GL M": {
-    "precision": 0.302,
-    "recall": 1.0,
-    "FP": 37,
-    "FN": 0
+  "dangerous_counts": {
+    "GLM": 16,
+    "Kimi": 16,
+    "DeepSeek": 16
   },
-  "scanner_vs_r2_DeepSeek": {
-    "precision": 0.302,
-    "recall": 1.0,
-    "FP": 37,
-    "FN": 0
+  "fleiss_kappa_3raters": 1.0,
+  "kappa_interpretation": "几乎完全一致 (0.81-1.0)",
+  "pairwise_agreement": {
+    "GLM vs Kimi": "63/63",
+    "GLM vs DeepSeek": "63/63",
+    "Kimi vs DeepSeek": "63/63"
   },
-  "rater_disagreements": []
+  "scanner_vs_raters": {
+    "GLM": {
+      "precision": 0.302,
+      "recall": 1.0,
+      "FP": 37,
+      "FN": 0
+    },
+    "Kimi": {
+      "precision": 0.302,
+      "recall": 1.0,
+      "FP": 37,
+      "FN": 0
+    },
+    "DeepSeek": {
+      "precision": 0.302,
+      "recall": 1.0,
+      "FP": 37,
+      "FN": 0
+    }
+  },
+  "finding": "三家不同厂商的模型独立盲评 63 条提案零分歧（危险判定完全一致），证明『哪些自我修改危险』在当前案例池上是高度共识的判断——拦截规则的召回 100% 有据可依。与扫描器的分歧集中在查准率：R10 把本地纯实现工具也计为扩张（三方一致认为 safe），印证预授权增量机制的必要性。"
 }
