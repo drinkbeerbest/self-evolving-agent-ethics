@@ -16,6 +16,9 @@ const L = {
   cost: 0, elapsed: 0, replayToken: 0, finished: false, taskCount: 0,
   gateMode: 'enforce', monitorViolations: 0, overlaySeries: null,
   tiles: { ids: [], kinds: {}, ok: {} },   // 任务卡阵：跨代追踪每道题 ✗/✓
+  taskDefs: {},                             // 题面定义（id → {kind, prompt, needs_tool, tool_args}）
+  taskHistory: {},                          // 逐代答题史（id → [{gen, ok, brief, answer}]）
+  genDetails: {},                           // 逐代详情（gen → {tasks, proposal, verdict...}）
   lineage: [],                              // 逐代谱系：变化图标 + 分数
   lastApplied: null,                        // 最近一次放行（翻转因果标注）
   lastAppliedKind: null,
@@ -181,6 +184,9 @@ function renderTiles(flips, cause) {
     return `<div class="tile ${state}${flip}" title="${esc(id)} · ${esc(kind)}"
       data-id="${esc(id)}"><b>${mark}</b><span>${esc(KIND_SHORT[kind] || kind || id.slice(0, 6))}</span></div>`;
   }).join('');
+  grid.querySelectorAll('.tile').forEach((el) => el.addEventListener('click', () => {
+    openTaskModal(el.dataset.id);
+  }));
   const causeEl = $('#tileCause');
   if (flips && flips.length) {
     const names = flips.map((id) => `「${KIND_SHORT[L.tiles.kinds[id]] || L.tiles.kinds[id] || id}」`).join('、');
@@ -214,13 +220,7 @@ function renderLineage() {
       </button>`;
   }).join('');
   strip.querySelectorAll('.lg-node').forEach((n) => n.addEventListener('click', () => {
-    const card = document.querySelector(`.evo-card[data-gen="${n.dataset.gen}"]`);
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      card.classList.remove('is-flash');
-      void card.offsetWidth;
-      card.classList.add('is-flash');
-    }
+    openGenModal(Number(n.dataset.gen));
   }));
 }
 
@@ -386,6 +386,9 @@ function handleEvent(evt) {
       L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
       L.cost = 0; L.elapsed = 0; L.taskCount = evt.task_count || 6;
       L.tiles = { ids: evt.task_ids || [], kinds: evt.task_kinds || {}, ok: {} };
+      L.taskDefs = {};
+      (evt.tasks || []).forEach((tk) => { L.taskDefs[tk.id] = tk; });
+      L.taskHistory = {}; L.genDetails = {};
       L.lineage = []; L.lastApplied = null; L.lastAppliedKind = null;
       L.prevVitals = null; L.ceiling = (evt.ceiling === undefined) ? null : evt.ceiling;
       L.gateMode = evt.gate_mode || 'enforce'; L.monitorViolations = 0;
@@ -421,6 +424,9 @@ function handleEvent(evt) {
       break;
     case 'task':
       setStatus(`第 ${evt.gen} 代 · ${evt.task} ${evt.ok ? '✓' : '✗'} ${evt.brief || ''}`);
+      (L.taskHistory[evt.task] = L.taskHistory[evt.task] || []).push({
+        gen: evt.gen, ok: evt.ok, brief: evt.brief || '', answer: evt.answer || '',
+      });
       break;
     case 'tasks': {
       // 任务卡阵：同批题跨代追踪，检测 ✗→✓ 翻转。
@@ -456,6 +462,20 @@ function handleEvent(evt) {
     case 'gen_end':
       L.scores.push(Number(evt.score) || 0);
       if (evt.stats) L.stats = evt.stats;
+      L.genDetails[evt.gen] = {
+        score: Number(evt.score) || 0,
+        action: evt.action || '', note: evt.note || '',
+        variance: !!evt.variance,
+        gate_mode: evt.gate_mode || '',
+        original_action: evt.original_action || '',
+        violations: evt.violations || [],
+        vitals: evt.vitals || {},
+        tasks: L.tiles.ids.map((id) => {
+          const hist = L.taskHistory[id] || [];
+          const last = hist[hist.length - 1] || {};
+          return { id, ok: last.ok, brief: last.brief || '', answer: last.answer || '' };
+        }),
+      };
       L.lineage.push({
         gen: evt.gen, score: Number(evt.score) || 0,
         kind: L.lastAppliedKind,
@@ -543,6 +563,7 @@ async function replaySession(sid) {
   L.sessionId = sid; L.scores = []; L.stats = { passed: 0, blocked: 0, api_tokens: 0 };
   L.cost = 0; L.elapsed = 0; L.running = false; L.finished = false;
   L.tiles = { ids: [], kinds: {}, ok: {} }; L.lineage = [];
+  L.taskDefs = {}; L.taskHistory = {}; L.genDetails = {};
   L.lastApplied = null; L.lastAppliedKind = null; L.prevVitals = null; L.ceiling = null;
   clearStream(); renderLiveStats(); renderCapChart(); renderTiles(); renderLineage();
   $('#liveTag').textContent = '回放 · ' + sid;
@@ -683,6 +704,96 @@ function openModal(v, evt) {
 function diff_html(mod) {
   const diff = renderDiff(mod);
   return diff ? `<div class="diff-box">${diff}</div>` : '';
+}
+
+/* ---------- 任务详情弹窗 ---------- */
+function openTaskModal(taskId) {
+  const def = L.taskDefs[taskId] || {};
+  const hist = L.taskHistory[taskId] || [];
+  const st = L.tiles.ok[taskId];
+  const stateTxt = st === true ? '✓ 通过' : st === false ? '✗ 未通过' : '· 尚未作答';
+  const rows = hist.length ? hist.map((h) => `
+    <tr>
+      <td class="num">G${h.gen}</td>
+      <td><span class="badge ${h.ok ? 'pass' : 'fail'}">${h.ok ? '✓' : '✗'}</span></td>
+      <td>${esc((h.answer || h.brief || '（无回答）').slice(0, 400))}${(h.answer || '').length > 400 ? '…' : ''}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="3"><p class="empty">尚无答题记录</p></td></tr>';
+  const bound = (L.genDetails && Object.values(L.genDetails).some(
+    (g) => (g.tasks || []).some((x) => x.id === taskId && x.answer.includes('自制工具'))));
+  $('#modalContent').innerHTML = `
+    <div class="detail-head">
+      <h2>题目详情 · ${esc(taskId)}</h2>
+      <p style="font-size:12.5px;color:var(--muted);margin:0;">
+        <span class="badge neutral">${esc(def.kind || '')}</span>
+        ${def.needs_tool ? `<span class="badge warn">需要工具 ${esc(def.needs_tool)}</span>` : ''}
+        <span class="badge ${st === true ? 'pass' : st === false ? 'fail' : 'neutral'}">${esc(stateTxt)}</span>
+        ${bound ? '<span class="badge accent">已绑定自制工具</span>' : ''}
+      </p>
+    </div>
+    <div class="card">
+      <h3>题目</h3>
+      <div class="diff-box">${esc(def.prompt || '（无题面）')}</div>
+      ${def.tool_args ? `<p class="card-note">工具验证输入 args 样例：${esc(String(def.tool_args).slice(0, 200))}…</p>` : ''}
+    </div>
+    <div class="card">
+      <h3>历代答题记录</h3>
+      <p class="card-note">同一道题跨代作答——从 ✗ 到 ✓ 的翻转就是进化的直接证据。</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>代</th><th>结果</th><th>回答 / 判分说明</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  $('#modalMask').classList.remove('is-hidden');
+}
+
+/* ---------- 代际详情弹窗 ---------- */
+function openGenModal(gen) {
+  const g = L.genDetails[gen];
+  if (!g) { toast(`尚无第 ${gen} 代的详情数据`); return; }
+  const taskRows = (g.tasks || []).map((x) => `
+    <tr>
+      <td class="num">${esc(x.id)}</td>
+      <td><span class="badge ${x.ok ? 'pass' : 'fail'}">${x.ok ? '✓' : '✗'}</span></td>
+      <td>${esc((x.answer || x.brief || '').slice(0, 200))}</td>
+    </tr>`).join('');
+  const v = (g.verdict || {});
+  const invFails = (v.results || []).filter((r) => r.status !== '通过');
+  const vit = g.vitals || {};
+  $('#modalContent').innerHTML = `
+    <div class="detail-head">
+      <h2>第 ${gen} 代全过程</h2>
+      <p style="font-size:12.5px;color:var(--muted);margin:0;">
+        <span class="badge ${g.action === '放行' ? 'pass' : g.action ? 'fail' : 'neutral'}">${esc(g.action || '观察轮')}</span>
+        ${g.variance ? '<span class="badge warn">分数波动（无构成变化）</span>' : ''}
+        ${g.gate_mode === 'monitor' ? '<span class="badge warn">监督对照</span>' : ''}
+      </p>
+    </div>
+    <div class="card">
+      <h3>本代答题 (${g.score} 分)</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>题目</th><th>结果</th><th>回答摘要</th></tr></thead>
+        <tbody>${taskRows || '<tr><td colspan="3"><p class="empty">无</p></td></tr>'}</tbody>
+      </table></div>
+    </div>
+    ${g.action && g.action !== '观察轮' ? `
+    <div class="card">
+      <h3>自我修改提案</h3>
+      <p style="font-size:13px;">${esc(g.note || '')}</p>
+      ${g.original_action && g.original_action !== '放行' ? `<p style="font-size:12.5px;color:var(--warn);">监督模式：原判定 ${esc(g.original_action)}${(g.violations || []).length ? '（' + esc(g.violations.join('、')) + '）' : ''}</p>` : ''}
+      ${invFails.length ? `<ul class="ev-list">${invFails.map((r) => `<li><strong>${esc(r.invariant)}</strong> ${esc(r.summary || '')}</li>`).join('')}</ul>` : ''}
+    </div>` : ''}
+    <div class="card">
+      <h3>本代构成快照</h3>
+      <div class="chip-row">
+        ${(vit.tools || []).map((x) => `<span class="chip">${esc(x)}</span>`).join('')}
+      </div>
+      <div class="vit-group"><div class="vit-label">提示词 P</div>
+        <ul class="vit-list">${(vit.prompts || []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      </div>
+      <div class="code-ver">${esc(v.code_version || '')} · 参数 ${esc(JSON.stringify(vit.params || {}))}</div>
+    </div>`;
+  $('#modalMask').classList.remove('is-hidden');
 }
 
 function closeModal() {
