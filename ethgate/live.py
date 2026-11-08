@@ -156,7 +156,7 @@ class SessionManager:
             if old is not None:
                 old.stop()
                 thread = old.thread
-                if thread is not None and thread.is_alive():
+                if thread is not None and thread.is_alive() and hasattr(thread, "join"):
                     thread.join(timeout=5.0)
             session = LiveSession(opts)
             self.current = session
